@@ -537,7 +537,8 @@ static bool consumeCompressedDebugSectionHeader(StringRef &data,
   return true;
 }
 
-DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj)
+DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj,
+    const object::LoadedObjectInfo *L)
     : IsLittleEndian(Obj.isLittleEndian()),
       AddressSize(Obj.getBytesInAddress()) {
   for (const SectionRef &Section : Obj.sections()) {
@@ -551,7 +552,15 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj)
     if (IsVirtual)
       continue;
     StringRef data;
-    Section.getContents(data);
+
+    uint64_t LoadAddress = L ? L->getSectionLoadAddress(name) : 0;
+    if (LoadAddress != 0)
+    {
+      uint64_t Size = Section.getSize();
+      data = StringRef(reinterpret_cast<char *>(LoadAddress),Size);
+    } else {
+      Section.getContents(data);
+    }
 
     name = name.substr(name.find_first_not_of("._")); // Skip . and _ prefixes.
 
@@ -620,6 +629,13 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj)
 
     StringRef RelSecName;
     RelocatedSection->getName(RelSecName);
+
+    // Check if the JIT already did the relocations for us
+    // If so, we just use the relocated section
+    bool AlreadyRelocated = L && L->getSectionLoadAddress(RelSecName) != 0;
+    if (AlreadyRelocated)
+      continue;
+
     RelSecName = RelSecName.substr(
         RelSecName.find_first_not_of("._")); // Skip . and _ prefixes.
 
@@ -655,9 +671,33 @@ DWARFContextInMemory::DWARFContextInMemory(const object::ObjectFile &Obj)
         uint64_t Type;
         Reloc.getType(Type);
         uint64_t SymAddr = 0;
+        uint64_t SectionLoadAddress = 0;
         object::symbol_iterator Sym = Reloc.getSymbol();
-        if (Sym != Obj.symbol_end())
+        object::section_iterator RSec(Obj.section_end());
+        if (Sym != Obj.symbol_end()) {
           Sym->getAddress(SymAddr);
+          Sym->getSection(RSec);
+          if (RSec != Obj.section_end()) {
+            StringRef SecName;
+            RSec->getName(SecName);
+            SectionLoadAddress = L ? L->getSectionLoadAddress(SecName) : 0;
+            if (SectionLoadAddress != 0) {
+              uint64_t SecAddr = RSec->getAddress();
+              SymAddr += SectionLoadAddress - SecAddr;
+            }
+          }
+        } else {
+          RSec = Reloc.getSection();
+          if (RSec != Obj.section_end()) {
+            SymAddr = RSec->getAddress();
+            StringRef SecName;
+            RSec->getName(SecName);
+            SectionLoadAddress = L ? L->getSectionLoadAddress(SecName) : 0;
+            if (SectionLoadAddress != 0) {
+              SymAddr = SectionLoadAddress;
+            }
+          }
+        }
 
         object::RelocVisitor V(Obj);
         object::RelocToApply R(V.visit(Type, Reloc, SymAddr));

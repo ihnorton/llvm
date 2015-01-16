@@ -16,6 +16,8 @@
 
 #include "JITSymbolFlags.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
+#include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/Memory.h"
 #include <memory>
 
@@ -54,12 +56,14 @@ public:
   };
 
   /// \brief Information about the loaded object.
-  class LoadedObjectInfo {
+  class LoadedObjectInfo : public object::LoadedObjectInfo {
     friend class RuntimeDyldImpl;
   public:
     LoadedObjectInfo(RuntimeDyldImpl &RTDyld, unsigned BeginIdx,
                      unsigned EndIdx)
-      : RTDyld(RTDyld), BeginIdx(BeginIdx), EndIdx(EndIdx) { }
+      : object::LoadedObjectInfo(),
+        RTDyld(RTDyld), BeginIdx(BeginIdx), EndIdx(EndIdx)
+        { }
 
     virtual ~LoadedObjectInfo() {}
 
@@ -67,6 +71,8 @@ public:
     getObjectForDebug(const object::ObjectFile &Obj) const = 0;
 
     uint64_t getSectionLoadAddress(StringRef Name) const;
+
+    virtual LoadedObjectInfo *clone() const = 0;
 
   protected:
     virtual void anchor();

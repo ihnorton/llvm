@@ -605,13 +605,10 @@ bool DWARFDebugLine::LineTable::lookupAddressRange(
       RowIter first_row = Rows.begin() + cur_seq.FirstRowIndex;
       RowIter last_row = Rows.begin() + cur_seq.LastRowIndex;
       RowIter row_pos = std::upper_bound(first_row, last_row, row,
-                                         DWARFDebugLine::Row::orderByAddress);
+                                         DWARFDebugLine::Row::orderByAddressLeq);
       // The 'row_pos' iterator references the first row that is greater than
-      // our start address. Unless that's the first row, we want to start at
-      // the row before that.
+      // or equal to our start address.
       first_row_index = cur_seq.FirstRowIndex + (row_pos - first_row);
-      if (row_pos != first_row)
-        --first_row_index;
     } else
       first_row_index = cur_seq.FirstRowIndex;
 
@@ -623,9 +620,11 @@ bool DWARFDebugLine::LineTable::lookupAddressRange(
       RowIter first_row = Rows.begin() + cur_seq.FirstRowIndex;
       RowIter last_row = Rows.begin() + cur_seq.LastRowIndex;
       RowIter row_pos = std::upper_bound(first_row, last_row, row,
-                                         DWARFDebugLine::Row::orderByAddress);
+                                         DWARFDebugLine::Row::orderByAddressLeq);
       // The 'row_pos' iterator references the first row that is greater than
-      // our end address.  The row before that is the last row we want.
+      // or equal our end address. The row before that is the last row we want,
+      // since end_address is the first address past the end of the range we're
+      // looking up.
       last_row_index = cur_seq.FirstRowIndex + (row_pos - first_row) - 1;
     } else
       // Contrary to what you might expect, DWARFDebugLine::SequenceLastRowIndex

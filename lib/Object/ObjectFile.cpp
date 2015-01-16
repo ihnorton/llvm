@@ -102,3 +102,5 @@ ObjectFile::createObjectFile(StringRef ObjectPath) {
 
   return OwningBinary<ObjectFile>(std::move(Obj), std::move(Buffer));
 }
+
+LoadedObjectInfo::~LoadedObjectInfo() {}

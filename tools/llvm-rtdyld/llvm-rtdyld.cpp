@@ -46,6 +46,7 @@ InputFileList(cl::Positional, cl::ZeroOrMore,
 enum ActionType {
   AC_Execute,
   AC_PrintLineInfo,
+  AC_PrintDebugLineInfo,
   AC_Verify
 };
 
@@ -56,6 +57,8 @@ Action(cl::desc("Action to perform:"),
                              "Load, link, and execute the inputs."),
                   clEnumValN(AC_PrintLineInfo, "printline",
                              "Load, link, and print line information for each function."),
+                  clEnumValN(AC_PrintDebugLineInfo, "printdebugline",
+                             "Load, link, and print line information for each function using the debug object"),
                   clEnumValN(AC_Verify, "verify",
                              "Load, link and verify the resulting memory image."),
                   clEnumValEnd));
@@ -187,7 +190,7 @@ static void loadDylibs() {
 
 /* *** */
 
-static int printLineInfoForInput() {
+static int printLineInfoForInput(bool UseDebugObj) {
   // Load any dylibs requested on the command line.
   loadDylibs();
 
@@ -224,14 +227,22 @@ static int printLineInfoForInput() {
     // Resolve all the relocations we can.
     Dyld.resolveRelocations();
 
-    OwningBinary<ObjectFile> DebugObj = LoadedObjInfo->getObjectForDebug(Obj);
-
-    std::unique_ptr<DIContext> Context(
-      DIContext::getDWARFContext(*DebugObj.getBinary()));
+    OwningBinary<ObjectFile> DebugObj;
+    std::unique_ptr<DIContext> Context;
+    ObjectFile *SymbolObj = &Obj;
+    if (UseDebugObj) {
+      DebugObj = LoadedObjInfo->getObjectForDebug(Obj);
+      SymbolObj = DebugObj.getBinary();
+      Context.reset(
+        DIContext::getDWARFContext(*SymbolObj));
+    } else {
+      Context.reset(
+        DIContext::getDWARFContext(Obj,LoadedObjInfo.get()));
+    }
 
     // Use symbol info to iterate functions in the object.
-    for (object::symbol_iterator I = DebugObj.getBinary()->symbol_begin(),
-                                 E = DebugObj.getBinary()->symbol_end();
+    for (object::symbol_iterator I = SymbolObj->symbol_begin(),
+                                 E = SymbolObj->symbol_end();
          I != E; ++I) {
       object::SymbolRef::Type SymType;
       if (I->getType(SymType)) continue;
@@ -242,6 +253,16 @@ static int printLineInfoForInput() {
         if (I->getName(Name)) continue;
         if (I->getAddress(Addr)) continue;
         if (I->getSize(Size)) continue;
+
+        if (!UseDebugObj) {
+          object::section_iterator Sec(SymbolObj->section_end());
+          I->getSection(Sec);
+          StringRef SecName;
+          Sec->getName(SecName);
+          uint64_t SectionLoadAddress = LoadedObjInfo->getSectionLoadAddress(SecName);
+          if (SectionLoadAddress != 0)
+            Addr += SectionLoadAddress - Sec->getAddress();
+        }
 
         outs() << "Function: " << Name << ", Size = " << Size << "\n";
 
@@ -581,7 +602,9 @@ int main(int argc, char **argv) {
   case AC_Execute:
     return executeInput();
   case AC_PrintLineInfo:
-    return printLineInfoForInput();
+    return printLineInfoForInput(false);
+  case AC_PrintDebugLineInfo:
+    return printLineInfoForInput(true);
   case AC_Verify:
     return linkAndVerify();
   }
