@@ -80,16 +80,16 @@ class RuntimeDyldELF : public RuntimeDyldImpl {
                            ObjSectionToIDMap &LocalSections,
                            RelocationValueRef &Rel);
 
-  uint64_t findGOTEntry(uint64_t LoadAddr, uint64_t Offset);
   size_t getGOTEntrySize();
+  uint64_t allocateGOTEntries(unsigned no);
 
-  void updateGOTEntries(StringRef Name, uint64_t Addr) override;
+  // The tentative ID for the GOT section
+  unsigned GOTSectionID;
 
-  // Relocation entries for symbols whose position-independent offset is
-  // updated in a global offset table.
-  typedef SmallVector<RelocationValueRef, 2> GOTRelocations;
-  GOTRelocations GOTEntries; // List of entries requiring finalization.
-  SmallVector<std::pair<SID, GOTRelocations>, 8> GOTs; // Allocated tables.
+  // Records the current number of allocated slots in the GOT
+  // (This would be equivalent to GOTEntries.size() were it not for relocations
+  // that consume more than one slot)
+  unsigned CurrentGOTIndex;
 
   // When a module is loaded we save the SectionID of the EH frame section
   // in a table until we receive a request to register all unregistered
