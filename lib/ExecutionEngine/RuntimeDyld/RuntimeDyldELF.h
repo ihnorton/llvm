@@ -78,6 +78,7 @@ private:
   void resolveSystemZRelocation(const SectionEntry &Section, uint64_t Offset,
                                 uint64_t Value, uint32_t Type, int64_t Addend);
 
+  // Get the maximum necessary stub space needed for one relocation
   unsigned getMaxStubSize() override {
     if (Arch == Triple::aarch64 || Arch == Triple::aarch64_be)
       return 20; // movz; movk; movk; movk; br
@@ -88,11 +89,21 @@ private:
     else if (Arch == Triple::ppc64 || Arch == Triple::ppc64le)
       return 44;
     else if (Arch == Triple::x86_64)
-      return 6; // 2-byte jmp instruction + 32-bit relative address
+      return 16; // but we may need to allocate up to two GOT entries (=16).
     else if (Arch == Triple::systemz)
       return 16;
     else
       return 0;
+  }
+
+  // Get the size of just the function itself.
+  // This is in general smaller than getMaxStubSize if the stub
+  // function also needs a GOT entry.
+  unsigned getMaxStubFunctionSize() {
+    if (Arch == Triple::x86_64)
+      return 6; // 2-byte jmp instruction + 32-bit relative address
+    else
+      return getMaxStubSize();
   }
 
   unsigned getStubAlignment() override {
