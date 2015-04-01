@@ -111,6 +111,11 @@ private:
 
   size_t getGOTEntrySize();
   uint64_t allocateGOTEntries(unsigned no);
+  void resolveGOTOffsetRelocation(unsigned SectionID, uint64_t Offset,
+                                  uint64_t GOTOffset);
+  RelocationEntry computeGotOffsetRE(uint64_t GOTOffset,
+                                     uint64_t SymbolOffset,
+                                     unsigned Type);
 
   // The tentative ID for the GOT section
   unsigned GOTSectionID;
