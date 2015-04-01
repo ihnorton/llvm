@@ -1318,16 +1318,15 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
         // Bump our stub offset counter
         Section.StubOffset = StubOffset + getMaxStubSize();
 
-        uint64_t GOTOffset = allocateGOTEntries(1);
+        // Allocate a GOT Entry
+        uint64_t GOTOffset = allocateGOTEntries(SectionID, 1);
 
-        // Fill in the relative address of the GOT Entry into the stub
-        RelocationEntry GOTRE(SectionID, StubOffset + 2, ELF::R_X86_64_PC32,
-          GOTOffset - 4);
-        addRelocationForSection(GOTRE, GOTSectionID);
+        // The load of the GOT address has an addend of -4
+        resolveGOTOffsetRelocation(SectionID, StubOffset + 2, GOTOffset - 4);
 
         // Fill in the value of the symbol we're targeting into the GOT
-        RelocationEntry RE(GOTSectionID, GOTOffset, ELF::R_X86_64_64, 0);
-        addRelocationForSymbol(RE, Value.SymbolName);
+        addRelocationForSymbol(computeGOTOffsetRE(SectionID,GOTOffset,0,ELF::R_X86_64_64),
+            Value.SymbolName);
       }
 
       // Make the target call a call into the stub table.
@@ -1339,14 +1338,11 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
       addRelocationForSection(RE, Value.SectionID);
     }
   } else if (Arch == Triple::x86_64 && RelType == ELF::R_X86_64_GOTPCREL) {
-    uint64_t GOTOffset = allocateGOTEntries(1);
-    // Fill in the relative address of the GOT Entry into the stub
-    RelocationEntry GOTRE(SectionID, Offset, ELF::R_X86_64_PC32,
-      GOTOffset + Addend);
-    addRelocationForSection(GOTRE, GOTSectionID);
+    uint64_t GOTOffset = allocateGOTEntries(SectionID, 1);
+    resolveGOTOffsetRelocation(SectionID, Offset, GOTOffset + Addend);
 
     // Fill in the value of the symbol we're targeting into the GOT
-    RelocationEntry RE(GOTSectionID, GOTOffset, ELF::R_X86_64_64, Value.Offset);
+    RelocationEntry RE = computeGOTOffsetRE(SectionID, GOTOffset, Value.Offset, ELF::R_X86_64_64);
     if (Value.SymbolName)
       addRelocationForSymbol(RE, Value.SymbolName);
     else
