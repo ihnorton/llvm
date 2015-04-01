@@ -47,6 +47,7 @@ MCJIT::createJIT(std::unique_ptr<Module> M,
                  std::string *ErrorStr,
                  std::shared_ptr<MCJITMemoryManager> MemMgr,
                  std::shared_ptr<RuntimeDyld::SymbolResolver> Resolver,
+                 std::shared_ptr<RuntimeDyld::TLSSymbolResolver> TLSResolver,
                  std::unique_ptr<TargetMachine> TM) {
   // Try to register the program as a source of symbols to resolve against.
   //
@@ -62,15 +63,17 @@ MCJIT::createJIT(std::unique_ptr<Module> M,
   }
 
   return new MCJIT(std::move(M), std::move(TM), std::move(MemMgr),
-                   std::move(Resolver));
+                   std::move(Resolver), std::move(TLSResolver));
 }
 
 MCJIT::MCJIT(std::unique_ptr<Module> M, std::unique_ptr<TargetMachine> tm,
              std::shared_ptr<MCJITMemoryManager> MemMgr,
-             std::shared_ptr<RuntimeDyld::SymbolResolver> Resolver)
+             std::shared_ptr<RuntimeDyld::SymbolResolver> Resolver,
+             std::shared_ptr<RuntimeDyld::TLSSymbolResolver> TLSResolver)
     : ExecutionEngine(std::move(M)), TM(std::move(tm)), Ctx(nullptr),
       MemMgr(std::move(MemMgr)), Resolver(*this, std::move(Resolver)),
-      Dyld(*this->MemMgr, this->Resolver), ObjCache(nullptr) {
+      TLSResolver(std::move(TLSResolver)),
+      Dyld(*this->MemMgr, this->Resolver, this->TLSResolver.get()), ObjCache(nullptr) {
   // FIXME: We are managing our modules, so we do not want the base class
   // ExecutionEngine to manage them as well. To avoid double destruction
   // of the first (and only) module added in ExecutionEngine constructor

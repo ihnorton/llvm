@@ -40,7 +40,7 @@ protected:
   public:
     LinkedObjectSet(RuntimeDyld::MemoryManager &MemMgr,
                     RuntimeDyld::SymbolResolver &Resolver)
-        : RTDyld(llvm::make_unique<RuntimeDyld>(MemMgr, Resolver)),
+        : RTDyld(llvm::make_unique<RuntimeDyld>(MemMgr, Resolver, nullptr)),
           State(Raw) {}
 
     virtual ~LinkedObjectSet() {}

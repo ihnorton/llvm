@@ -46,7 +46,6 @@ inline std::error_code Check(std::error_code Err) {
 }
 
 class Twine;
-class TLSMemoryManager;
 
 /// SectionEntry - represents a section emitted into memory by the dynamic
 /// linker.
@@ -195,8 +194,8 @@ protected:
   // The symbol resolver to use for external symbols.
   RuntimeDyld::SymbolResolver &Resolver;
 
-  // The analog to the MemoryManager, but for thread local storage
-  TLSMemoryManager *TLSMM;
+  // The symbol resolver to use for external TLS symbols.
+  RuntimeDyld::TLSSymbolResolver *TLSResolver;
 
   // Attached RuntimeDyldChecker instance. Null if no instance attached.
   RuntimeDyldCheckerImpl *Checker;
@@ -393,8 +392,9 @@ protected:
 
 public:
   RuntimeDyldImpl(RuntimeDyld::MemoryManager &MemMgr,
-                  RuntimeDyld::SymbolResolver &Resolver)
-    : MemMgr(MemMgr), Resolver(Resolver), Checker(nullptr),
+                  RuntimeDyld::SymbolResolver &Resolver,
+                  RuntimeDyld::TLSSymbolResolver *TLSResolver)
+    : MemMgr(MemMgr), Resolver(Resolver), TLSResolver(TLSResolver), Checker(nullptr),
       ProcessAllSections(false), HasError(false) {
   }
 
@@ -406,10 +406,6 @@ public:
 
   void setRuntimeDyldChecker(RuntimeDyldCheckerImpl *Checker) {
     this->Checker = Checker;
-  }
-
-  void setTLSMemManager(TLSMemoryManager *MM) {
-    TLSMM = MM;
   }
 
   virtual std::unique_ptr<RuntimeDyld::LoadedObjectInfo>

@@ -24,7 +24,6 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TargetRegistry.h"
-#include "llvm/ExecutionEngine/TLSMemoryManager.h"
 
 using namespace llvm;
 using namespace llvm::object;
@@ -188,8 +187,9 @@ LoadedELFObjectInfo::getObjectForDebug(const ObjectFile &Obj) const {
 namespace llvm {
 
 RuntimeDyldELF::RuntimeDyldELF(RuntimeDyld::MemoryManager &MemMgr,
-                               RuntimeDyld::SymbolResolver &Resolver)
-    : RuntimeDyldImpl(MemMgr, Resolver), GOTSectionID(0), CurrentGOTIndex(0) {}
+                               RuntimeDyld::SymbolResolver &Resolver,
+                               RuntimeDyld::TLSSymbolResolver *TLSResolver)
+    : RuntimeDyldImpl(MemMgr, Resolver, TLSResolver), GOTSectionID(0), CurrentGOTIndex(0) {}
 RuntimeDyldELF::~RuntimeDyldELF() {}
 
 void RuntimeDyldELF::registerEHFrames() {
@@ -280,7 +280,7 @@ void RuntimeDyldELF::resolveX86_64Relocation(const SectionEntry &Section,
 }
 
 void RuntimeDyldELF::resolveX86_64RelocationTLS(const SectionEntry &Section, uint64_t Offset,
-                                                       TLSMemoryManagerELF::TLSOffset Value,
+                                                       RuntimeDyldELF::TLSSymbolInfoELF Value,
                                                        uint32_t Type)
 {
   switch (Type) {
@@ -288,10 +288,10 @@ void RuntimeDyldELF::resolveX86_64RelocationTLS(const SectionEntry &Section, uin
     llvm_unreachable("TLS Relocation type not implemented yet!");
     break;
     case ELF::R_X86_64_DTPMOD64:
-    support::ulittle64_t::ref(Section.Address + Offset) = Value.first;
+    support::ulittle64_t::ref(Section.Address + Offset) = Value.getModuleID();
     break;
     case ELF::R_X86_64_DTPOFF64:
-    support::ulittle64_t::ref(Section.Address + Offset) = Value.second;
+    support::ulittle64_t::ref(Section.Address + Offset) = Value.getOffset();
     break;
   }
 }
@@ -909,7 +909,7 @@ void RuntimeDyldELF::resolveRelocation(const SectionEntry &Section,
 }
 
 void RuntimeDyldELF::resolveRelocationTLS(const RelocationEntry &RE,
-                                                TLSMemoryManagerELF::TLSOffset Value)
+                                                RuntimeDyldELF::TLSSymbolInfoELF Value)
 {
   const SectionEntry &Section = Sections[RE.SectionID];
   switch (Arch) {
@@ -924,7 +924,7 @@ void RuntimeDyldELF::resolveRelocationTLS(const RelocationEntry &RE,
 
 void RuntimeDyldELF::resolveExternalTLSSymbols()
 {
-  TLSMemoryManagerELF *TLSMemManagerELF = (TLSMemoryManagerELF *)TLSMM;
+  TLSSymbolResolverELF *SR = (TLSSymbolResolverELF *)TLSResolver;
 
   while (!ExternalTLSRelocations.empty()) {
     StringMap<RelocationList>::iterator i = ExternalTLSRelocations.begin();
@@ -937,7 +937,7 @@ void RuntimeDyldELF::resolveExternalTLSSymbols()
       // Ignore relocations for sections that were not loaded
       if (Sections[RE.SectionID].Address == nullptr)
         continue;
-      TLSMemoryManagerELF::TLSOffset Value = TLSMemManagerELF->TLSdlsym(Name);
+      TLSSymbolInfoELF Value = SR->findTLSSymbolELF(Name);
       resolveRelocationTLS(RE, Value);
     }
 
@@ -946,7 +946,7 @@ void RuntimeDyldELF::resolveExternalTLSSymbols()
 
   // Some implementations may want to provide a custom get_addr function.
   // Do the override here.
-  uint64_t AddrOverride = TLSMemManagerELF->GetAddrOverride();
+  uint64_t AddrOverride = SR->GetAddrOverride();
   if (AddrOverride != 0) {
     auto i = ExternalSymbolRelocations.find("__tls_get_addr");
     if (i != ExternalSymbolRelocations.end()) {
@@ -1025,7 +1025,7 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
 
   uint64_t Offset;
   Check(RelI->getOffset(Offset));
-  TLSMemoryManagerELF *TLSMemManagerELF = (TLSMemoryManagerELF *)TLSMM;
+  TLSSymbolResolverELF *TLSSR = (TLSSymbolResolverELF *)TLSResolver;
 
   DEBUG(dbgs() << "\t\tSectionID: " << SectionID << " Offset: " << Offset
                << "\n");
@@ -1424,7 +1424,7 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
     } else if (RelType == ELF::R_X86_64_TLSGD) {
       uint64_t GOTOffset = allocateGOTEntries(2);
       RelocationEntry GOTRE(SectionID, Offset, ELF::R_X86_64_PC32,
-        GOTOffset + Addend + TLSMemManagerELF->ExtraGOTAddend());
+        GOTOffset + Addend + TLSSR->ExtraGOTAddend());
       addRelocationForSection(GOTRE, GOTSectionID);
 
       RelocationEntry REMOD(GOTSectionID, GOTOffset, ELF::R_X86_64_DTPMOD64, Value.Offset);
@@ -1499,7 +1499,7 @@ void RuntimeDyldELF::finalizeLoad(const ObjectFile &Obj,
   if (GOTSectionID != 0) {
     // Allocate memory for the section
     size_t TotalSize = CurrentGOTIndex * getGOTEntrySize();
-    uint8_t *Addr = MemMgr->allocateDataSection(TotalSize, getGOTEntrySize(),
+    uint8_t *Addr = MemMgr.allocateDataSection(TotalSize, getGOTEntrySize(),
                                                 GOTSectionID, ".got", false);
     if (!Addr)
       report_fatal_error("Unable to allocate memory for GOT!");

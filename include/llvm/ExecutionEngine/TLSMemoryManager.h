@@ -36,7 +36,7 @@ private:
     RTDyldMemoryManager *MM;
 public:
     TLSMemoryManagerGLibC(RTDyldMemoryManager *MM) : TLSMemoryManagerELF(), MM(MM) {};
-    TLSOffset TLSdlsym(StringRef Name) override;
+    TLSSymbolInfo TLSdlsym(StringRef Name) override;
 };
 
 // Support ELF-on-Darwin by matching ELF's TLS model onto that used by OS X
@@ -50,7 +50,7 @@ public:
 
     int64_t ExtraGOTAddend() override { return -8; };
     uint64_t GetAddrOverride() override { return tlv_get_addr_addr; };
-    TLSOffset TLSdlsym(StringRef Name) override;
+    TLSSymbolInfo TLSdlsym(StringRef Name) override;
 };
 
 
