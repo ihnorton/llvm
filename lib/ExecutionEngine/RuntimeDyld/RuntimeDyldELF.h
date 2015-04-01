@@ -15,6 +15,7 @@
 #define LLVM_LIB_EXECUTIONENGINE_RUNTIMEDYLD_RUNTIMEDYLDELF_H
 
 #include "RuntimeDyldImpl.h"
+#include "llvm/ExecutionEngine/TLSMemoryManager.h"
 #include "llvm/ADT/DenseMap.h"
 
 using namespace llvm;
@@ -27,9 +28,15 @@ class RuntimeDyldELF : public RuntimeDyldImpl {
                          uint64_t Value, uint32_t Type, int64_t Addend,
                          uint64_t SymOffset = 0);
 
+  void resolveRelocationTLS(const RelocationEntry &RE,
+                         TLSMemoryManagerELF::TLSOffset Value);
+
   void resolveX86_64Relocation(const SectionEntry &Section, uint64_t Offset,
                                uint64_t Value, uint32_t Type, int64_t Addend,
                                uint64_t SymOffset);
+
+  void resolveX86_64RelocationTLS(const SectionEntry &Section, uint64_t Offset,
+                               TLSMemoryManagerELF::TLSOffset Value, uint32_t Type);
 
   void resolveX86Relocation(const SectionEntry &Section, uint64_t Offset,
                             uint32_t Value, uint32_t Type, int32_t Addend);
@@ -104,6 +111,8 @@ public:
 
   std::unique_ptr<RuntimeDyld::LoadedObjectInfo>
   loadObject(const object::ObjectFile &O) override;
+
+  void resolveExternalTLSSymbols() override;
 
   void resolveRelocation(const RelocationEntry &RE, uint64_t Value) override;
   relocation_iterator

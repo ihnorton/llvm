@@ -24,9 +24,9 @@ namespace llvm {
 
 class ExecutionEngine;
 
-  namespace object {
-    class ObjectFile;
-  }
+namespace object {
+  class ObjectFile;
+}
 
 class MCJITMemoryManager : public RuntimeDyld::MemoryManager {
 public:

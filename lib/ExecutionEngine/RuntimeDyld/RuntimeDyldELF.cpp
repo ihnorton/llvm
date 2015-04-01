@@ -24,6 +24,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TargetRegistry.h"
+#include "llvm/ExecutionEngine/TLSMemoryManager.h"
 
 using namespace llvm;
 using namespace llvm::object;
@@ -275,6 +276,23 @@ void RuntimeDyldELF::resolveX86_64Relocation(const SectionEntry &Section,
     support::ulittle64_t::ref(Section.Address + Offset) = RealOffset;
     break;
   }
+  }
+}
+
+void RuntimeDyldELF::resolveX86_64RelocationTLS(const SectionEntry &Section, uint64_t Offset,
+                                                       TLSMemoryManagerELF::TLSOffset Value,
+                                                       uint32_t Type)
+{
+  switch (Type) {
+    default:
+    llvm_unreachable("TLS Relocation type not implemented yet!");
+    break;
+    case ELF::R_X86_64_DTPMOD64:
+    support::ulittle64_t::ref(Section.Address + Offset) = Value.first;
+    break;
+    case ELF::R_X86_64_DTPOFF64:
+    support::ulittle64_t::ref(Section.Address + Offset) = Value.second;
+    break;
   }
 }
 
@@ -890,6 +908,54 @@ void RuntimeDyldELF::resolveRelocation(const SectionEntry &Section,
   }
 }
 
+void RuntimeDyldELF::resolveRelocationTLS(const RelocationEntry &RE,
+                                                TLSMemoryManagerELF::TLSOffset Value)
+{
+  const SectionEntry &Section = Sections[RE.SectionID];
+  switch (Arch) {
+  case Triple::x86_64:
+    resolveX86_64RelocationTLS(Section,RE.Offset,Value,RE.RelType);
+    break;
+  default:
+    llvm_unreachable("TLS Support not implemented for this CPU type");
+    break;
+  }
+}
+
+void RuntimeDyldELF::resolveExternalTLSSymbols()
+{
+  TLSMemoryManagerELF *TLSMemManagerELF = (TLSMemoryManagerELF *)TLSMM;
+
+  while (!ExternalTLSRelocations.empty()) {
+    StringMap<RelocationList>::iterator i = ExternalTLSRelocations.begin();
+    StringRef Name = i->first();
+    RelocationList &Relocs = i->second;
+    assert(Name.size() != 0 && "TLS relocations should not be absolute.");
+
+    for (unsigned idx = 0, e = Relocs.size(); idx != e; ++idx) {
+      const RelocationEntry &RE = Relocs[idx];
+      // Ignore relocations for sections that were not loaded
+      if (Sections[RE.SectionID].Address == nullptr)
+        continue;
+      TLSMemoryManagerELF::TLSOffset Value = TLSMemManagerELF->TLSdlsym(Name);
+      resolveRelocationTLS(RE, Value);
+    }
+
+    ExternalTLSRelocations.erase(i);
+  }
+
+  // Some implementations may want to provide a custom get_addr function.
+  // Do the override here.
+  uint64_t AddrOverride = TLSMemManagerELF->GetAddrOverride();
+  if (AddrOverride != 0) {
+    auto i = ExternalSymbolRelocations.find("__tls_get_addr");
+    if (i != ExternalSymbolRelocations.end()) {
+      resolveRelocationList(i->second, AddrOverride);
+      ExternalSymbolRelocations.erase(i);
+    }
+  }
+}
+
 relocation_iterator RuntimeDyldELF::processRelocationRef(
     unsigned SectionID, relocation_iterator RelI,
     const ObjectFile &Obj,
@@ -959,6 +1025,7 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
 
   uint64_t Offset;
   Check(RelI->getOffset(Offset));
+  TLSMemoryManagerELF *TLSMemManagerELF = (TLSMemoryManagerELF *)TLSMM;
 
   DEBUG(dbgs() << "\t\tSectionID: " << SectionID << " Offset: " << Offset
                << "\n");
@@ -1279,80 +1346,104 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
                         Addend);
     else
       resolveRelocation(Section, Offset, StubAddress, RelType, Addend);
-  } else if (Arch == Triple::x86_64 && RelType == ELF::R_X86_64_PLT32) {
-    // The way the PLT relocations normally work is that the linker allocates
-    // the
-    // PLT and this relocation makes a PC-relative call into the PLT.  The PLT
-    // entry will then jump to an address provided by the GOT.  On first call,
-    // the
-    // GOT address will point back into PLT code that resolves the symbol. After
-    // the first call, the GOT entry points to the actual function.
-    //
-    // For local functions we're ignoring all of that here and just replacing
-    // the PLT32 relocation type with PC32, which will translate the relocation
-    // into a PC-relative call directly to the function. For external symbols we
-    // can't be sure the function will be within 2^32 bytes of the call site, so
-    // we need to create a stub, which calls into the GOT.  This case is
-    // equivalent to the usual PLT implementation except that we use the stub
-    // mechanism in RuntimeDyld (which puts stubs at the end of the section)
-    // rather than allocating a PLT section.
-    if (Value.SymbolName) {
-      // This is a call to an external function.
-      // Look for an existing stub.
-      SectionEntry &Section = Sections[SectionID];
-      StubMap::const_iterator i = Stubs.find(Value);
-      uintptr_t StubAddress;
-      if (i != Stubs.end()) {
-        StubAddress = uintptr_t(Section.Address) + i->second;
-        DEBUG(dbgs() << " Stub function found\n");
+  } else if (Arch == Triple::x86_64) {
+    if (RelType == ELF::R_X86_64_PLT32) {
+      // The way the PLT relocations normally work is that the linker allocates
+      // the
+      // PLT and this relocation makes a PC-relative call into the PLT.  The PLT
+      // entry will then jump to an address provided by the GOT.  On first call,
+      // the
+      // GOT address will point back into PLT code that resolves the symbol. After
+      // the first call, the GOT entry points to the actual function.
+      //
+      // For local functions we're ignoring all of that here and just replacing
+      // the PLT32 relocation type with PC32, which will translate the relocation
+      // into a PC-relative call directly to the function. For external symbols we
+      // can't be sure the function will be within 2^32 bytes of the call site, so
+      // we need to create a stub, which calls into the GOT.  This case is
+      // equivalent to the usual PLT implementation except that we use the stub
+      // mechanism in RuntimeDyld (which puts stubs at the end of the section)
+      // rather than allocating a PLT section.
+      if (Value.SymbolName) {
+        // This is a call to an external function.
+        // Look for an existing stub.
+        SectionEntry &Section = Sections[SectionID];
+        StubMap::const_iterator i = Stubs.find(Value);
+        uintptr_t StubAddress;
+        if (i != Stubs.end()) {
+          StubAddress = uintptr_t(Section.Address) + i->second;
+          DEBUG(dbgs() << " Stub function found\n");
+        } else {
+          // Create a new stub function (equivalent to a PLT entry).
+          DEBUG(dbgs() << " Create a new stub function\n");
+
+          uintptr_t BaseAddress = uintptr_t(Section.Address);
+          uintptr_t StubAlignment = getStubAlignment();
+          StubAddress = (BaseAddress + Section.StubOffset + StubAlignment - 1) &
+                        -StubAlignment;
+          unsigned StubOffset = StubAddress - BaseAddress;
+          Stubs[Value] = StubOffset;
+          createStubFunction((uint8_t *)StubAddress);
+
+          // Bump our stub offset counter
+          Section.StubOffset = StubOffset + getMaxStubSize();
+
+          uint64_t GOTOffset = allocateGOTEntries(1);
+
+          // Fill in the relative address of the GOT Entry into the stub
+          RelocationEntry GOTRE(SectionID, StubOffset + 2, ELF::R_X86_64_PC32,
+            GOTOffset - 4);
+          addRelocationForSection(GOTRE, GOTSectionID);
+
+          // Fill in the value of the symbol we're targeting into the GOT
+          RelocationEntry RE(GOTSectionID, GOTOffset, ELF::R_X86_64_64, 0);
+          addRelocationForSymbol(RE, Value.SymbolName);
+        }
+
+        // Make the target call a call into the stub table.
+        resolveRelocation(Section, Offset, StubAddress, ELF::R_X86_64_PC32,
+                          Addend);
       } else {
-        // Create a new stub function (equivalent to a PLT entry).
-        DEBUG(dbgs() << " Create a new stub function\n");
-
-        uintptr_t BaseAddress = uintptr_t(Section.Address);
-        uintptr_t StubAlignment = getStubAlignment();
-        StubAddress = (BaseAddress + Section.StubOffset + StubAlignment - 1) &
-                      -StubAlignment;
-        unsigned StubOffset = StubAddress - BaseAddress;
-        Stubs[Value] = StubOffset;
-        createStubFunction((uint8_t *)StubAddress);
-
-        // Bump our stub offset counter
-        Section.StubOffset = StubOffset + getMaxStubSize();
-
-        uint64_t GOTOffset = allocateGOTEntries(1);
-
-        // Fill in the relative address of the GOT Entry into the stub
-        RelocationEntry GOTRE(SectionID, StubOffset + 2, ELF::R_X86_64_PC32,
-          GOTOffset - 4);
-        addRelocationForSection(GOTRE, GOTSectionID);
-
-        // Fill in the value of the symbol we're targeting into the GOT
-        RelocationEntry RE(GOTSectionID, GOTOffset, ELF::R_X86_64_64, 0);
-        addRelocationForSymbol(RE, Value.SymbolName);
+        RelocationEntry RE(SectionID, Offset, ELF::R_X86_64_PC32, Value.Addend,
+                           Value.Offset);
+        addRelocationForSection(RE, Value.SectionID);
       }
+    } else if (RelType == ELF::R_X86_64_GOTPCREL) {
+      uint64_t GOTOffset = allocateGOTEntries(1);
+      // Fill in the relative address of the GOT Entry into the stub
+      RelocationEntry GOTRE(SectionID, Offset, ELF::R_X86_64_PC32,
+        GOTOffset + Addend);
+      addRelocationForSection(GOTRE, GOTSectionID);
 
-      // Make the target call a call into the stub table.
-      resolveRelocation(Section, Offset, StubAddress, ELF::R_X86_64_PC32,
-                        Addend);
+      // Fill in the value of the symbol we're targeting into the GOT
+      RelocationEntry RE(GOTSectionID, GOTOffset, ELF::R_X86_64_64, Value.Offset);
+      if (Value.SymbolName)
+        addRelocationForSymbol(RE, Value.SymbolName);
+      else
+        addRelocationForSection(RE, Value.SectionID);
+    } else if (RelType == ELF::R_X86_64_TLSGD) {
+      uint64_t GOTOffset = allocateGOTEntries(2);
+      RelocationEntry GOTRE(SectionID, Offset, ELF::R_X86_64_PC32,
+        GOTOffset + Addend + TLSMemManagerELF->ExtraGOTAddend());
+      addRelocationForSection(GOTRE, GOTSectionID);
+
+      RelocationEntry REMOD(GOTSectionID, GOTOffset, ELF::R_X86_64_DTPMOD64, Value.Offset);
+      RelocationEntry REOFF(GOTSectionID, GOTOffset + 8, ELF::R_X86_64_DTPOFF64, Value.Offset);
+      if (Value.SymbolName) {
+        addRelocationForSymbol(REMOD, Value.SymbolName, true);
+        addRelocationForSymbol(REOFF, Value.SymbolName, true);
+      }
+      else {
+        addRelocationForSection(REMOD, Value.SectionID);
+        addRelocationForSection(REOFF, Value.SectionID);
+      }
     } else {
-      RelocationEntry RE(SectionID, Offset, ELF::R_X86_64_PC32, Value.Addend,
-                         Value.Offset);
-      addRelocationForSection(RE, Value.SectionID);
+      RelocationEntry RE(SectionID, Offset, RelType, Value.Addend, Value.Offset);
+      if (Value.SymbolName)
+        addRelocationForSymbol(RE, Value.SymbolName);
+      else
+        addRelocationForSection(RE, Value.SectionID);
     }
-  } else if (Arch == Triple::x86_64 && RelType == ELF::R_X86_64_GOTPCREL) {
-    uint64_t GOTOffset = allocateGOTEntries(1);
-    // Fill in the relative address of the GOT Entry into the stub
-    RelocationEntry GOTRE(SectionID, Offset, ELF::R_X86_64_PC32,
-      GOTOffset + Addend);
-    addRelocationForSection(GOTRE, GOTSectionID);
-
-    // Fill in the value of the symbol we're targeting into the GOT
-    RelocationEntry RE(GOTSectionID, GOTOffset, ELF::R_X86_64_64, Value.Offset);
-    if (Value.SymbolName)
-      addRelocationForSymbol(RE, Value.SymbolName);
-    else
-      addRelocationForSection(RE, Value.SectionID);
   } else {
     RelocationEntry RE(SectionID, Offset, RelType, Value.Addend, Value.Offset);
     if (Value.SymbolName)
@@ -1391,7 +1482,6 @@ size_t RuntimeDyldELF::getGOTEntrySize() {
 
 uint64_t RuntimeDyldELF::allocateGOTEntries(unsigned no)
 {
-  dbgs() << "Allocating GOT Entry\n";
   if (GOTSectionID == 0) {
     GOTSectionID = Sections.size();
     // Reserve a section id. We'll allocate the section later

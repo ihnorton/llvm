@@ -46,6 +46,7 @@ inline std::error_code Check(std::error_code Err) {
 }
 
 class Twine;
+class TLSMemoryManager;
 
 /// SectionEntry - represents a section emitted into memory by the dynamic
 /// linker.
@@ -194,6 +195,9 @@ protected:
   // The symbol resolver to use for external symbols.
   RuntimeDyld::SymbolResolver &Resolver;
 
+  // The analog to the MemoryManager, but for thread local storage
+  TLSMemoryManager *TLSMM;
+
   // Attached RuntimeDyldChecker instance. Null if no instance attached.
   RuntimeDyldCheckerImpl *Checker;
 
@@ -230,6 +234,10 @@ protected:
   // external when they aren't found in the global symbol table of all loaded
   // modules.  This map is indexed by symbol name.
   StringMap<RelocationList> ExternalSymbolRelocations;
+
+  // We separate out external relocations to TLS symbols so we can process
+  // them all in one go.
+  StringMap<RelocationList> ExternalTLSRelocations;
 
 
   typedef std::map<RelocationValueRef, uintptr_t> StubMap;
@@ -335,7 +343,10 @@ protected:
 
   // \brief Add a relocation entry that uses the given symbol.  This symbol may
   // be found in the global symbol table, or it may be external.
-  void addRelocationForSymbol(const RelocationEntry &RE, StringRef SymbolName);
+  // Also indicate whether processing this relocation will require dealing
+  // with thread local storage.
+  void addRelocationForSymbol(const RelocationEntry &RE, StringRef SymbolName,
+    bool isTLS = false);
 
   /// \brief Emits long jump instruction to Addr.
   /// \return Pointer to the memory area for emitting target address.
@@ -360,6 +371,13 @@ protected:
 
   /// \brief Resolve relocations to external symbols.
   void resolveExternalSymbols();
+
+  /// \brief Resolve TLS relocations to external symbols
+  ///
+  /// This is split out from resolveExternalSymbols, because unlike regular symbols
+  /// TLS symbols do not require just an address but have an object-file specific
+  /// representation.
+  virtual void resolveExternalTLSSymbols() {};
 
   // \brief Compute an upper bound of the memory that is required to load all
   // sections
@@ -388,6 +406,10 @@ public:
 
   void setRuntimeDyldChecker(RuntimeDyldCheckerImpl *Checker) {
     this->Checker = Checker;
+  }
+
+  void setTLSMemManager(TLSMemoryManager *MM) {
+    TLSMM = MM;
   }
 
   virtual std::unique_ptr<RuntimeDyld::LoadedObjectInfo>

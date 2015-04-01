@@ -83,6 +83,8 @@ void RuntimeDyldImpl::resolveRelocations() {
   MutexGuard locked(lock);
 
   // First, resolve relocations associated with external symbols.
+  if (TLSMM)
+    resolveExternalTLSSymbols();
   resolveExternalSymbols();
 
   // Just iterate over the sections we have and resolve all the relocations
@@ -649,14 +651,21 @@ void RuntimeDyldImpl::addRelocationForSection(const RelocationEntry &RE,
 }
 
 void RuntimeDyldImpl::addRelocationForSymbol(const RelocationEntry &RE,
-                                             StringRef SymbolName) {
+                                             StringRef SymbolName,
+                                             bool isTLS) {
   // Relocation by symbol.  If the symbol is found in the global symbol table,
   // create an appropriate section relocation.  Otherwise, add it to
   // ExternalSymbolRelocations.
   RTDyldSymbolTable::const_iterator Loc = GlobalSymbolTable.find(SymbolName);
   if (Loc == GlobalSymbolTable.end()) {
-    ExternalSymbolRelocations[SymbolName].push_back(RE);
+    if (isTLS) {
+      ExternalTLSRelocations[SymbolName].push_back(RE);
+    } else {
+      ExternalSymbolRelocations[SymbolName].push_back(RE);
+    }
   } else {
+    assert(!isTLS && "Declaring thread local variables in loaded objects "
+                     "is not yet supported.");
     // Copy the RE since we want to modify its addend.
     RelocationEntry RECopy = RE;
     const auto &SymInfo = Loc->second;
@@ -865,6 +874,8 @@ createRuntimeDyldCOFF(Triple::ArchType Arch, RuntimeDyld::MemoryManager &MM,
   return Dyld;
 }
 
+#include "llvm/ExecutionEngine/TLSMemoryManager.h"
+
 static std::unique_ptr<RuntimeDyldELF>
 createRuntimeDyldELF(RuntimeDyld::MemoryManager &MM,
                      RuntimeDyld::SymbolResolver &Resolver,
@@ -872,6 +883,11 @@ createRuntimeDyldELF(RuntimeDyld::MemoryManager &MM,
   std::unique_ptr<RuntimeDyldELF> Dyld(new RuntimeDyldELF(MM, Resolver));
   Dyld->setProcessAllSections(ProcessAllSections);
   Dyld->setRuntimeDyldChecker(Checker);
+#ifdef _GLIBC_
+  Dyld->setTLSMemManager(new TLSMemoryManagerGlibC(MM));
+#elif defined(__APPLE__)
+  Dyld->setTLSMemManager(new TLSMemoryManagerDarwin(MM));
+#endif
   return Dyld;
 }
 
