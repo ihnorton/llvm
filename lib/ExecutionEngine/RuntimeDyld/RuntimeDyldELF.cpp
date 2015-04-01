@@ -1387,9 +1387,9 @@ size_t RuntimeDyldELF::getGOTEntrySize() {
   return Result;
 }
 
-uint64_t RuntimeDyldELF::allocateGOTEntries(unsigned no)
+uint64_t RuntimeDyldELF::allocateGOTEntries(unsigned SectionID, unsigned no)
 {
-  dbgs() << "Allocating GOT Entry\n";
+  (void)SectionID; // The GOT Section is the same for all section in the object file
   if (GOTSectionID == 0) {
     GOTSectionID = Sections.size();
     // Reserve a section id. We'll allocate the section later
@@ -1401,13 +1401,27 @@ uint64_t RuntimeDyldELF::allocateGOTEntries(unsigned no)
   return StartOffset;
 }
 
+void RuntimeDyldELF::resolveGOTOffsetRelocation(unsigned SectionID, uint64_t Offset, uint64_t GOTOffset)
+{
+  // Fill in the relative address of the GOT Entry into the stub
+  RelocationEntry GOTRE(SectionID, Offset, ELF::R_X86_64_PC32, GOTOffset);
+  addRelocationForSection(GOTRE, GOTSectionID);
+}
+
+RelocationEntry RuntimeDyldELF::computeGOTOffsetRE(unsigned SectionID, uint64_t GOTOffset, uint64_t SymbolOffset,
+                                                   uint32_t Type)
+{
+  (void)SectionID; // The GOT Section is the same for all section in the object file
+  return RelocationEntry(GOTSectionID, GOTOffset, Type, SymbolOffset);
+}
+
 void RuntimeDyldELF::finalizeLoad(const ObjectFile &Obj,
                                   ObjSectionToIDMap &SectionMap) {
   // If necessary, allocate the global offset table
   if (GOTSectionID != 0) {
     // Allocate memory for the section
     size_t TotalSize = CurrentGOTIndex * getGOTEntrySize();
-    uint8_t *Addr = MemMgr->allocateDataSection(TotalSize, getGOTEntrySize(),
+    uint8_t *Addr = MemMgr.allocateDataSection(TotalSize, getGOTEntrySize(),
                                                 GOTSectionID, ".got", false);
     if (!Addr)
       report_fatal_error("Unable to allocate memory for GOT!");
