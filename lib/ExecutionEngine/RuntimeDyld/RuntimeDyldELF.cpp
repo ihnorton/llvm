@@ -1387,12 +1387,13 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
           // Bump our stub offset counter
           Section.StubOffset = StubOffset + getMaxStubSize();
 
-          uint64_t GOTOffset = allocateGOTEntries(1);
+          uint64_t GOTOffset = allocateGOTEntries(SectionID, 1);
 
           resolveGOTOffsetRelocation(SectionID, StubOffset + 2, GOTOffset - 4);
 
           // Fill in the value of the symbol we're targeting into the GOT
-          addRelocationForSymbol(computeGotOffsetRE(GOTOffset,0,ELF::R_X86_64_64), Value.SymbolName);
+          addRelocationForSymbol(computeGOTOffsetRE(SectionID,GOTOffset,0,ELF::R_X86_64_64),
+            Value.SymbolName);
         }
 
         // Make the target call a call into the stub table.
@@ -1404,22 +1405,22 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
         addRelocationForSection(RE, Value.SectionID);
       }
     } else if (RelType == ELF::R_X86_64_GOTPCREL) {
-      uint64_t GOTOffset = allocateGOTEntries(1);
+      uint64_t GOTOffset = allocateGOTEntries(SectionID, 1);
       resolveGOTOffsetRelocation(SectionID, Offset, GOTOffset + Addend);
 
       // Fill in the value of the symbol we're targeting into the GOT
-      RelocationEntry RE = computeGotOffsetRE(GOTOffset, Value.Offset, ELF::R_X86_64_64);
+      RelocationEntry RE = computeGOTOffsetRE(SectionID, GOTOffset, Value.Offset, ELF::R_X86_64_64);
       if (Value.SymbolName)
         addRelocationForSymbol(RE, Value.SymbolName);
       else
         addRelocationForSection(RE, Value.SectionID);
     } else if (RelType == ELF::R_X86_64_TLSGD) {
-      uint64_t GOTOffset = allocateGOTEntries(2);
+      uint64_t GOTOffset = allocateGOTEntries(SectionID, 2);
       resolveGOTOffsetRelocation(SectionID, Offset,
         GOTOffset + Addend + TLSSR->ExtraGOTAddend());
 
-      RelocationEntry REMOD = computeGotOffsetRE(GOTOffset, Value.Offset, ELF::R_X86_64_DTPMOD64);
-      RelocationEntry REOFF = computeGotOffsetRE(GOTOffset + 8, Value.Offset, ELF::R_X86_64_DTPOFF64);
+      RelocationEntry REMOD = computeGOTOffsetRE(SectionID, GOTOffset, Value.Offset, ELF::R_X86_64_DTPMOD64);
+      RelocationEntry REOFF = computeGOTOffsetRE(SectionID, GOTOffset + 8, Value.Offset, ELF::R_X86_64_DTPOFF64);
       if (Value.SymbolName) {
         addRelocationForSymbol(REMOD, Value.SymbolName, true);
         addRelocationForSymbol(REOFF, Value.SymbolName, true);
@@ -1471,8 +1472,9 @@ size_t RuntimeDyldELF::getGOTEntrySize() {
   return Result;
 }
 
-uint64_t RuntimeDyldELF::allocateGOTEntries(unsigned no)
+uint64_t RuntimeDyldELF::allocateGOTEntries(unsigned SectionID, unsigned no)
 {
+  (void)SectionID; // The GOT Section is the same for all section in the object file
   if (GOTSectionID == 0) {
     GOTSectionID = Sections.size();
     // Reserve a section id. We'll allocate the section later
@@ -1486,14 +1488,15 @@ uint64_t RuntimeDyldELF::allocateGOTEntries(unsigned no)
 
 void RuntimeDyldELF::resolveGOTOffsetRelocation(unsigned SectionID, uint64_t Offset, uint64_t GOTOffset)
 {
-    // Fill in the relative address of the GOT Entry into the stub
-    RelocationEntry GOTRE(SectionID, Offset, ELF::R_X86_64_PC32, GOTOffset);
-    addRelocationForSection(GOTRE, GOTSectionID);
+  // Fill in the relative address of the GOT Entry into the stub
+  RelocationEntry GOTRE(SectionID, Offset, ELF::R_X86_64_PC32, GOTOffset);
+  addRelocationForSection(GOTRE, GOTSectionID);
 }
 
-RelocationEntry RuntimeDyldELF::computeGotOffsetRE(uint64_t GOTOffset, uint64_t SymbolOffset,
+RelocationEntry RuntimeDyldELF::computeGOTOffsetRE(unsigned SectionID, uint64_t GOTOffset, uint64_t SymbolOffset,
                                                    uint32_t Type)
 {
+  (void)SectionID; // The GOT Section is the same for all section in the object file
   return RelocationEntry(GOTSectionID, GOTOffset, Type, SymbolOffset);
 }
 

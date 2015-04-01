@@ -110,10 +110,21 @@ private:
                            RelocationValueRef &Rel);
 
   size_t getGOTEntrySize();
-  uint64_t allocateGOTEntries(unsigned no);
+
+  SectionEntry &getSection(unsigned SectionID) { return Sections[SectionID]; }
+
+  // Allocate no GOT entries for use in the given section.
+  uint64_t allocateGOTEntries(unsigned SectionID, unsigned no);
+
+  // Resolve the relvative address of GOTOffset in Section ID and place
+  // it at the given Offset
   void resolveGOTOffsetRelocation(unsigned SectionID, uint64_t Offset,
                                   uint64_t GOTOffset);
-  RelocationEntry computeGotOffsetRE(uint64_t GOTOffset,
+
+  // For a GOT entry referenced from SectionID, compute a relocation entry
+  // that will place the final resolved value in the GOT slot
+  RelocationEntry computeGOTOffsetRE(unsigned SectionID,
+                                     uint64_t GOTOffset,
                                      uint64_t SymbolOffset,
                                      unsigned Type);
 
