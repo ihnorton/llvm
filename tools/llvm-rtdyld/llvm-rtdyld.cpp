@@ -197,7 +197,7 @@ static int printLineInfoForInput() {
   for(unsigned i = 0, e = InputFileList.size(); i != e; ++i) {
     // Instantiate a dynamic linker.
     TrivialMemoryManager MemMgr;
-    RuntimeDyld Dyld(MemMgr, MemMgr);
+    RuntimeDyld Dyld(MemMgr, MemMgr, nullptr);
 
     // Load the input memory buffer.
 
@@ -265,7 +265,7 @@ static int executeInput() {
 
   // Instantiate a dynamic linker.
   TrivialMemoryManager MemMgr;
-  RuntimeDyld Dyld(MemMgr, MemMgr);
+  RuntimeDyld Dyld(MemMgr, MemMgr, nullptr);
 
   // If we don't have any input files, read from stdin.
   if (!InputFileList.size())
@@ -514,7 +514,7 @@ static int linkAndVerify() {
 
   // Instantiate a dynamic linker.
   TrivialMemoryManager MemMgr;
-  RuntimeDyld Dyld(MemMgr, MemMgr);
+  RuntimeDyld Dyld(MemMgr, MemMgr, nullptr);
   Dyld.setProcessAllSections(true);
   RuntimeDyldChecker Checker(Dyld, Disassembler.get(), InstPrinter.get(),
                              llvm::dbgs());
