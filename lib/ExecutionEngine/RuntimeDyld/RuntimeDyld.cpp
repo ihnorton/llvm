@@ -880,9 +880,9 @@ createRuntimeDyldELF(RuntimeDyld::MemoryManager &MM,
                      RuntimeDyld::SymbolResolver &Resolver,
                      bool ProcessAllSections, RuntimeDyldCheckerImpl *Checker) {
   RuntimeDyld::TLSSymbolResolver *TLSResolver;
-  #ifdef _GLIBC_
-  TLSResolver = new TLSSymbolResolverGlibCELF(&Resolver);
-  #else
+  #ifdef __GLIBC__
+  TLSResolver = new TLSSymbolResolverGLibCELF(&Resolver);
+  #elif defined(__APPLE__)
   TLSResolver = new TLSSymbolResolverDarwinELF(&Resolver);
   #endif
   std::unique_ptr<RuntimeDyldELF> Dyld(new RuntimeDyldELF(MM, Resolver, TLSResolver));

@@ -27,7 +27,7 @@ typedef union dtv {
 } dtv_t;
 
 RuntimeDyld::TLSSymbolInfo
-TLSSymbolResolverGLibCELF::findTLSSymbol(std::string Name) override {
+TLSSymbolResolverGLibCELF::findTLSSymbol(const std::string &Name) {
     // It would be lovely to have an API for this. If we
     // wanted to, we might be able to actually look at the
     // internal libc datastructures, but that seems risky if
@@ -50,14 +50,15 @@ TLSSymbolResolverGLibCELF::findTLSSymbol(std::string Name) override {
 
     // Find the module whose start block for the current thread is closest
     // to the dlsym'd address. Ugly, but works.
-    uint64_t distance;
+    uint64_t min_distance = (uint64_t)-1;
+    uint64_t found_i = 0, found_offset = 0;
     for (size_t i = 1; i < cnt; ++i) {
       uint64_t distance = (Value - (uint64_t)dtv[i].pointer.val);
-      if (dtv[i].pointer.val == UnallocatedDTVSlot)
+      if (dtv[i].pointer.val == UnallocatedDTVSlot) {
         continue;
-      else if ((uint64_t)dtv[i].pointer.val > Value)
+      } else if ((uint64_t)dtv[i].pointer.val > Value) {
         continue;
-      else if (distance < min_distance) {
+      } else if (distance < min_distance) {
         min_distance = distance;
         found_i = i;
         found_offset = distance;
@@ -95,6 +96,6 @@ TLSSymbolResolverDarwinELF::findTLSSymbol(const std::string &Name) {
     return RuntimeDyldELF::TLSSymbolInfoELF(Descriptor->key, Descriptor->offset, SI.getFlags()).getOpaque();
 };
 
-}
-
 #endif
+
+}
