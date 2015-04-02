@@ -53,6 +53,24 @@ public:
     uint64_t Address;
   };
 
+  /// \brief Information about a thread-local named symbol.
+  class TLSSymbolInfo : public JITSymbolBase {
+  public:
+      TLSSymbolInfo() : JITSymbolBase(JITSymbolFlags::None), Data1(0), Data2(0) {}
+      TLSSymbolInfo(JITSymbolFlags Flags) : JITSymbolBase(Flags), Data1(0), Data2(0) {}
+      TLSSymbolInfo(uint64_t Data1, uint64_t Data2, JITSymbolFlags Flags = JITSymbolFlags::None) :
+        JITSymbolBase(Flags), Data1(0), Data2(0) {}
+
+      uint64_t getFirst() { return Data1; };
+      uint64_t getSecond() { return Data2; };
+  protected:
+      // Opaque protected fields for use by the actual RuntimeDyld/SymbolInfo
+      // subclass to interpret. We add them here to allow us to define a uniform
+      // interface in the TLSSymbolResolver.
+      uint64_t Data1;
+      uint64_t Data2;
+  };
+
   /// \brief Information about the loaded object.
   class LoadedObjectInfo {
     friend class RuntimeDyldImpl;
@@ -168,8 +186,24 @@ public:
     virtual void anchor();
   };
 
+  /// \brief TLS Symbol resolution.
+  ///
+  /// This is split out from the general symbol resolution mechanism since, in
+  /// general, TLS symbol resolution is a much harder problem that can depend
+  /// e.g. on implementation details of the C libraries used by the client.
+  /// Thus, it makes sense to be able to set the TLS symbol resolution mechanism
+  /// separately from the regular symbol resolution mechanism.
+  class TLSSymbolResolver {
+  public:
+    virtual ~TLSSymbolResolver() {};
+
+    /// This method returns the an opaque object describing the variables location
+    /// in thread-local (e.g. module ID and offset)
+    virtual TLSSymbolInfo findTLSSymbol(const std::string &Name) = 0;
+  };
+
   /// \brief Construct a RuntimeDyld instance.
-  RuntimeDyld(MemoryManager &MemMgr, SymbolResolver &Resolver);
+  RuntimeDyld(MemoryManager &MemMgr, SymbolResolver &Resolver, TLSSymbolResolver *TLSResolver);
   ~RuntimeDyld();
 
   /// Add the referenced object file to the list of objects to be loaded and
@@ -225,6 +259,7 @@ private:
   std::unique_ptr<RuntimeDyldImpl> Dyld;
   MemoryManager &MemMgr;
   SymbolResolver &Resolver;
+  TLSSymbolResolver *TLSResolver;
   bool ProcessAllSections;
   RuntimeDyldCheckerImpl *Checker;
 };

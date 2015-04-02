@@ -23,10 +23,11 @@
 namespace llvm {
 
 class ExecutionEngine;
+class RuntimeDyld;
 
-  namespace object {
-    class ObjectFile;
-  }
+namespace object {
+  class ObjectFile;
+}
 
 class MCJITMemoryManager : public RuntimeDyld::MemoryManager {
 public:
