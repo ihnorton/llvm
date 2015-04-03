@@ -17,6 +17,8 @@ namespace llvm {
 
 #ifdef __GLIBC__
 
+#include "pthread.h"
+
 // The DTV as specified in the ELF ABI
 typedef union dtv {
     size_t counter;

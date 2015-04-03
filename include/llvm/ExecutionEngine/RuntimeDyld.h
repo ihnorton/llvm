@@ -59,7 +59,7 @@ public:
       TLSSymbolInfo() : JITSymbolBase(JITSymbolFlags::None), Data1(0), Data2(0) {}
       TLSSymbolInfo(JITSymbolFlags Flags) : JITSymbolBase(Flags), Data1(0), Data2(0) {}
       TLSSymbolInfo(uint64_t Data1, uint64_t Data2, JITSymbolFlags Flags = JITSymbolFlags::None) :
-        JITSymbolBase(Flags), Data1(0), Data2(0) {}
+        JITSymbolBase(Flags), Data1(Data1), Data2(Data2) {}
 
       uint64_t getFirst() { return Data1; };
       uint64_t getSecond() { return Data2; };

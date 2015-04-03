@@ -1429,6 +1429,18 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
         addRelocationForSection(REMOD, Value.SectionID);
         addRelocationForSection(REOFF, Value.SectionID);
       }
+    } else if (RelType == ELF::R_X86_64_GOTTPOFF) {
+      uint64_t GOTOffset = allocateGOTEntries(SectionID, 1);
+      resolveGOTOffsetRelocation(SectionID, Offset,
+        GOTOffset + Addend + TLSSR->ExtraGOTAddend());
+
+      RelocationEntry REOFF = computeGOTOffsetRE(SectionID, GOTOffset + 8, Value.Offset, ELF::R_X86_64_DTPOFF64);
+      if (Value.SymbolName) {
+        addRelocationForSymbol(REOFF, Value.SymbolName, true);
+      }
+      else {
+        addRelocationForSection(REOFF, Value.SectionID);
+      }
     } else {
       RelocationEntry RE(SectionID, Offset, RelType, Value.Addend, Value.Offset);
       if (Value.SymbolName)
