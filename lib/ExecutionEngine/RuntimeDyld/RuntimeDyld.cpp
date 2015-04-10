@@ -783,6 +783,11 @@ void RuntimeDyldImpl::resolveRelocationList(const RelocationList &Relocs,
 }
 
 void RuntimeDyldImpl::resolveExternalSymbols() {
+  // First give the subclass a chance to resolve any TLS symbols.
+  // This may require pulling in additional modules, creating new
+  // external relocations.
+  if (TLSResolver)
+    resolveExternalTLSSymbols();
   while (!ExternalSymbolRelocations.empty()) {
     StringMap<RelocationList>::iterator i = ExternalSymbolRelocations.begin();
 
@@ -829,6 +834,11 @@ void RuntimeDyldImpl::resolveExternalSymbols() {
     }
 
     ExternalSymbolRelocations.erase(i);
+
+    // Resolving this symbol may have loaded additional modules whose TLS
+    // Relocations need to be resolved.
+    if (TLSResolver)
+      resolveExternalTLSSymbols();
   }
 }
 

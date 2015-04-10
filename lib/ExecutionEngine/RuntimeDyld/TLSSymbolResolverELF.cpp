@@ -28,6 +28,11 @@ typedef union dtv {
     } pointer;
 } dtv_t;
 
+typedef struct tcb_t {
+    struct tcb *self;
+    dtv_t *dtv;
+} tcb_t;
+
 RuntimeDyld::TLSSymbolInfo
 TLSSymbolResolverGLibCELF::findTLSSymbol(const std::string &Name) {
     // It would be lovely to have an API for this. If we
@@ -44,7 +49,8 @@ TLSSymbolResolverGLibCELF::findTLSSymbol(const std::string &Name) {
     uint64_t Value = SI.getAddress();
 
     // This is glibc specifc but followed by a number of other C libraries
-    dtv_t *dtv = (dtv_t *)(((void **)pthread_self())[1]);
+    tcb_t *tcb = (tcb_t *)pthread_self();
+    dtv_t *dtv = tcb->dtv;
 
     // The number of allocated entries in the DTV is specified as the value
     // of dtv[-1]
@@ -68,7 +74,9 @@ TLSSymbolResolverGLibCELF::findTLSSymbol(const std::string &Name) {
     }
     assert(found_i != 0 && "Value could not be found in thread local storage");
 
-    return RuntimeDyldELF::TLSSymbolInfoELF(found_i, found_offset, SI.getFlags()).getOpaque();
+    RuntimeDyldELF::TLSSymbolInfoELF::ModuleInfo mod(found_i,
+        (uint64_t)dtv[found_i].pointer.val - (uint64_t)tcb);
+    return RuntimeDyldELF::TLSSymbolInfoELF(mod, found_offset, SI.getFlags()).getOpaque();
 }
 
 #endif

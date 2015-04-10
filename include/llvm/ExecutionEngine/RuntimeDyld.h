@@ -56,19 +56,22 @@ public:
   /// \brief Information about a thread-local named symbol.
   class TLSSymbolInfo : public JITSymbolBase {
   public:
-      TLSSymbolInfo() : JITSymbolBase(JITSymbolFlags::None), Data1(0), Data2(0) {}
-      TLSSymbolInfo(JITSymbolFlags Flags) : JITSymbolBase(Flags), Data1(0), Data2(0) {}
-      TLSSymbolInfo(uint64_t Data1, uint64_t Data2, JITSymbolFlags Flags = JITSymbolFlags::None) :
-        JITSymbolBase(Flags), Data1(Data1), Data2(Data2) {}
+      TLSSymbolInfo() : JITSymbolBase(JITSymbolFlags::None), Data1(0), Data2(0), Data3(0) {}
+      TLSSymbolInfo(JITSymbolFlags Flags) : JITSymbolBase(Flags), Data1(0), Data2(0), Data3(0) {}
+      TLSSymbolInfo(uint64_t Data1, uint64_t Data2, uint64_t Data3,
+        JITSymbolFlags Flags = JITSymbolFlags::None) :
+        JITSymbolBase(Flags), Data1(Data1), Data2(Data2), Data3(Data3) {}
 
       uint64_t getFirst() { return Data1; };
       uint64_t getSecond() { return Data2; };
+      uint64_t getThird() { return Data3; };
   protected:
       // Opaque protected fields for use by the actual RuntimeDyld/SymbolInfo
       // subclass to interpret. We add them here to allow us to define a uniform
       // interface in the TLSSymbolResolver.
       uint64_t Data1;
       uint64_t Data2;
+      uint64_t Data3;
   };
 
   /// \brief Information about the loaded object.

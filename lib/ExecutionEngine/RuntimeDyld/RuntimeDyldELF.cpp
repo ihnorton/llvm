@@ -285,7 +285,10 @@ void RuntimeDyldELF::resolveX86_64RelocationTLS(const SectionEntry &Section, uin
     llvm_unreachable("TLS Relocation type not implemented yet!");
     break;
     case ELF::R_X86_64_DTPMOD64:
-    support::ulittle64_t::ref(Section.Address + Offset) = Value.getModuleID();
+    support::ulittle64_t::ref(Section.Address + Offset) = Value.getModInfo().ModuleID;
+    break;
+    case ELF::R_X86_64_TPOFF64:
+    support::ulittle64_t::ref(Section.Address + Offset) = Value.getModInfo().tpoff + Value.getOffset();
     break;
     case ELF::R_X86_64_DTPOFF64:
     support::ulittle64_t::ref(Section.Address + Offset) = Value.getOffset();
@@ -929,12 +932,12 @@ void RuntimeDyldELF::resolveExternalTLSSymbols()
     RelocationList &Relocs = i->second;
     assert(Name.size() != 0 && "TLS relocations should not be absolute.");
 
+    TLSSymbolInfoELF Value = SR->findTLSSymbolELF(Name);
     for (unsigned idx = 0, e = Relocs.size(); idx != e; ++idx) {
       const RelocationEntry &RE = Relocs[idx];
       // Ignore relocations for sections that were not loaded
       if (Sections[RE.SectionID].Address == nullptr)
         continue;
-      TLSSymbolInfoELF Value = SR->findTLSSymbolELF(Name);
       resolveRelocationTLS(RE, Value);
     }
 
@@ -1434,7 +1437,7 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
       resolveGOTOffsetRelocation(SectionID, Offset,
         GOTOffset + Addend + TLSSR->ExtraGOTAddend());
 
-      RelocationEntry REOFF = computeGOTOffsetRE(SectionID, GOTOffset + 8, Value.Offset, ELF::R_X86_64_DTPOFF64);
+      RelocationEntry REOFF = computeGOTOffsetRE(SectionID, GOTOffset, Value.Offset, ELF::R_X86_64_TPOFF64);
       if (Value.SymbolName) {
         addRelocationForSymbol(REOFF, Value.SymbolName, true);
       }

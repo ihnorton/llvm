@@ -26,11 +26,18 @@ public:
     // Wraps a RuntimeDyld::TLSSymbolInfo with accessors to easily access the ELF specific interpretation
   class TLSSymbolInfoELF {
   public:
-    TLSSymbolInfoELF(uint64_t ModuleID, uint64_t Offset, JITSymbolFlags Flags = JITSymbolFlags::None) :
-      Data(ModuleID,Offset,Flags) {};
+    struct ModuleInfo {
+        uint64_t ModuleID;
+        int64_t tpoff;
+        ModuleInfo(uint64_t ModuleID, int64_t tpoff) :
+          ModuleID(ModuleID), tpoff(tpoff) {}
+    };
+
+    TLSSymbolInfoELF(ModuleInfo Mod, uint64_t Offset, JITSymbolFlags Flags = JITSymbolFlags::None) :
+      Data(Mod.ModuleID,Offset,Mod.tpoff,Flags) {};
     TLSSymbolInfoELF(RuntimeDyld::TLSSymbolInfo Data) : Data(Data) {};
 
-    uint64_t getModuleID() { return Data.getFirst(); }
+    ModuleInfo getModInfo() { return ModuleInfo(Data.getFirst(), Data.getThird()); }
     uint64_t getOffset() { return Data.getSecond(); }
     RuntimeDyld::TLSSymbolInfo getOpaque() { return Data; }
 
