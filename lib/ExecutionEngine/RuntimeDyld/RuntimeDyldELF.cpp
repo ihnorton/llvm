@@ -1579,7 +1579,7 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
         createStubFunction((uint8_t *)StubAddress);
 
         // Bump our stub offset counter
-        Section.StubOffset = StubOffset + getMaxStubSize();
+        Section.StubOffset = StubOffset + getMaxStubFunctionSize();
 
         // Allocate a GOT Entry
         uint64_t GOTOffset = allocateGOTEntries(SectionID, 1);
@@ -1665,67 +1665,28 @@ size_t RuntimeDyldELF::getGOTEntrySize() {
 
 uint64_t RuntimeDyldELF::allocateGOTEntries(unsigned SectionID, unsigned no)
 {
-  (void)SectionID; // The GOT Section is the same for all section in the object file
-  if (GOTSectionID == 0) {
-    GOTSectionID = Sections.size();
-    // Reserve a section id. We'll allocate the section later
-    // once we know the total size
-    Sections.push_back(SectionEntry(".got", 0, 0, 0));
-  }
-  uint64_t StartOffset = CurrentGOTIndex * getGOTEntrySize();
-  CurrentGOTIndex += no;
-  return StartOffset;
+  SectionEntry &Section = getSection(SectionID);
+  uint64_t Offset = Section.StubOffset;
+  Section.StubOffset += 8*no;
+  return Offset;
 }
 
 void RuntimeDyldELF::resolveGOTOffsetRelocation(unsigned SectionID, uint64_t Offset, uint64_t GOTOffset)
 {
-  // Fill in the relative address of the GOT Entry into the stub
-  RelocationEntry GOTRE(SectionID, Offset, ELF::R_X86_64_PC32, GOTOffset);
-  addRelocationForSection(GOTRE, GOTSectionID);
+  SectionEntry &Section = getSection(SectionID);
+  resolveRelocation(Section, Offset,
+                   (uint64_t)Section.Address + GOTOffset, ELF::R_X86_64_PC32,
+                   0);
 }
 
 RelocationEntry RuntimeDyldELF::computeGOTOffsetRE(unsigned SectionID, uint64_t GOTOffset, uint64_t SymbolOffset,
                                                    uint32_t Type)
 {
-  (void)SectionID; // The GOT Section is the same for all section in the object file
-  return RelocationEntry(GOTSectionID, GOTOffset, Type, SymbolOffset);
+  return RelocationEntry(SectionID, GOTOffset, Type, SymbolOffset);
 }
 
 void RuntimeDyldELF::finalizeLoad(const ObjectFile &Obj,
                                   ObjSectionToIDMap &SectionMap) {
-  // If necessary, allocate the global offset table
-  if (GOTSectionID != 0) {
-    // Allocate memory for the section
-    size_t TotalSize = CurrentGOTIndex * getGOTEntrySize();
-    uint8_t *Addr = MemMgr.allocateDataSection(TotalSize, getGOTEntrySize(),
-                                                GOTSectionID, ".got", false);
-    if (!Addr)
-      report_fatal_error("Unable to allocate memory for GOT!");
-
-    Sections[GOTSectionID] = SectionEntry(".got", Addr, TotalSize, 0);
-
-    if (Checker)
-      Checker->registerSection(Obj.getFileName(), GOTSectionID);
-
-    // For now, initialize all GOT entries to zero.  We'll fill them in as
-    // needed when GOT-based relocations are applied.
-    memset(Addr, 0, TotalSize);
-    if (IsMipsN64ABI) {
-      // To correctly resolve Mips GOT relocations, we need a mapping from
-      // object's sections to GOTs.
-      for (section_iterator SI = Obj.section_begin(), SE = Obj.section_end();
-           SI != SE; ++SI) {
-        if (SI->relocation_begin() != SI->relocation_end()) {
-          section_iterator RelocatedSection = SI->getRelocatedSection();
-          ObjSectionToIDMap::iterator i = SectionMap.find(*RelocatedSection);
-          assert (i != SectionMap.end());
-          SectionToGOTMap[i->second] = GOTSectionID;
-        }
-      }
-      GOTSymbolOffsets.clear();
-    }
-  }
-
   // Look for and record the EH frame section.
   ObjSectionToIDMap::iterator i, e;
   for (i = SectionMap.begin(), e = SectionMap.end(); i != e; ++i) {
