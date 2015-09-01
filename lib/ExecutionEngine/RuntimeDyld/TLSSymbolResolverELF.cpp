@@ -103,7 +103,7 @@ TLSSymbolResolverDarwinELF::findTLSSymbol(const std::string &Name) {
         assert(tlv_get_addr_addr == (uint64_t)Descriptor->tlv_get_addr &&
             "Multiple values for __tlv_get_addr not supported");
     }
-    return RuntimeDyldELF::TLSSymbolInfoELF(Descriptor->key, Descriptor->offset, SI.getFlags()).getOpaque();
+    return RuntimeDyldELF::TLSSymbolInfoELF(RuntimeDyldELF::TLSSymbolInfoELF::ModuleInfo(Descriptor->key, 0), Descriptor->offset, SI.getFlags()).getOpaque();
 };
 
 #endif
