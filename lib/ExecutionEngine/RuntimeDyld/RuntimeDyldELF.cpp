@@ -186,8 +186,10 @@ LoadedELFObjectInfo::getObjectForDebug(const ObjectFile &Obj) const {
 namespace llvm {
 
 RuntimeDyldELF::RuntimeDyldELF(RuntimeDyld::MemoryManager &MemMgr,
-                               RuntimeDyld::SymbolResolver &Resolver)
-    : RuntimeDyldImpl(MemMgr, Resolver), GOTSectionID(0), CurrentGOTIndex(0) {}
+                               RuntimeDyld::SymbolResolver &Resolver,
+                               RuntimeDyld::TLSSymbolResolver *TLSResolver)
+    : RuntimeDyldImpl(MemMgr, Resolver, TLSResolver),
+      GOTSectionID(0), CurrentGOTIndex(0) {}
 RuntimeDyldELF::~RuntimeDyldELF() {}
 
 void RuntimeDyldELF::registerEHFrames() {
@@ -261,6 +263,26 @@ void RuntimeDyldELF::resolveX86_64Relocation(const SectionEntry &Section,
     support::ulittle64_t::ref(Section.Address + Offset) = RealOffset;
     break;
   }
+  }
+}
+
+void RuntimeDyldELF::resolveX86_64RelocationTLS(const SectionEntry &Section, uint64_t Offset,
+                                                       RuntimeDyldELF::TLSSymbolInfoELF Value,
+                                                       uint32_t Type)
+{
+  switch (Type) {
+    default:
+    llvm_unreachable("TLS Relocation type not implemented yet!");
+    break;
+    case ELF::R_X86_64_DTPMOD64:
+    support::ulittle64_t::ref(Section.Address + Offset) = Value.getModInfo().ModuleID;
+    break;
+    case ELF::R_X86_64_TPOFF64:
+    support::ulittle64_t::ref(Section.Address + Offset) = Value.getModInfo().tpoff + Value.getOffset();
+    break;
+    case ELF::R_X86_64_DTPOFF64:
+    support::ulittle64_t::ref(Section.Address + Offset) = Value.getOffset();
+    break;
   }
 }
 
@@ -1084,6 +1106,54 @@ void RuntimeDyldELF::resolveRelocation(const SectionEntry &Section,
   }
 }
 
+void RuntimeDyldELF::resolveRelocationTLS(const RelocationEntry &RE,
+                                                RuntimeDyldELF::TLSSymbolInfoELF Value)
+{
+  const SectionEntry &Section = Sections[RE.SectionID];
+  switch (Arch) {
+  case Triple::x86_64:
+    resolveX86_64RelocationTLS(Section,RE.Offset,Value,RE.RelType);
+    break;
+  default:
+    llvm_unreachable("TLS Support not implemented for this CPU type");
+    break;
+  }
+}
+
+void RuntimeDyldELF::resolveExternalTLSSymbols()
+{
+  TLSSymbolResolverELF *SR = (TLSSymbolResolverELF *)TLSResolver;
+
+  while (!ExternalTLSRelocations.empty()) {
+    StringMap<RelocationList>::iterator i = ExternalTLSRelocations.begin();
+    StringRef Name = i->first();
+    RelocationList &Relocs = i->second;
+    assert(Name.size() != 0 && "TLS relocations should not be absolute.");
+
+    TLSSymbolInfoELF Value = SR->findTLSSymbolELF(Name);
+    for (unsigned idx = 0, e = Relocs.size(); idx != e; ++idx) {
+      const RelocationEntry &RE = Relocs[idx];
+      // Ignore relocations for sections that were not loaded
+      if (Sections[RE.SectionID].Address == nullptr)
+        continue;
+      resolveRelocationTLS(RE, Value);
+    }
+
+    ExternalTLSRelocations.erase(i);
+  }
+
+  // Some implementations may want to provide a custom get_addr function.
+  // Do the override here.
+  uint64_t AddrOverride = SR->GetAddrOverride();
+  if (AddrOverride != 0) {
+    auto i = ExternalSymbolRelocations.find("__tls_get_addr");
+    if (i != ExternalSymbolRelocations.end()) {
+      resolveRelocationList(i->second, AddrOverride);
+      ExternalSymbolRelocations.erase(i);
+    }
+  }
+}
+
 void *RuntimeDyldELF::computePlaceholderAddress(unsigned SectionID, uint64_t Offset) const {
   return (void*)(Sections[SectionID].ObjAddress + Offset);
 }
@@ -1166,6 +1236,7 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
   }
 
   uint64_t Offset = RelI->getOffset();
+  TLSSymbolResolverELF *TLSSR = (TLSSymbolResolverELF *)TLSResolver;
 
   DEBUG(dbgs() << "\t\tSectionID: " << SectionID << " Offset: " << Offset
                << "\n");
@@ -1600,6 +1671,12 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
                   Value.Offset);
         addRelocationForSection(RE, Value.SectionID);
       }
+    } else if (RelType == ELF::R_X86_64_PC32) {
+      Value.Addend += support::ulittle32_t::ref(computePlaceholderAddress(SectionID, Offset));
+      processSimpleRelocation(SectionID, Offset, RelType, Value);
+    } else if (RelType == ELF::R_X86_64_PC64) {
+      Value.Addend += support::ulittle64_t::ref(computePlaceholderAddress(SectionID, Offset));
+      processSimpleRelocation(SectionID, Offset, RelType, Value);
     } else if (RelType == ELF::R_X86_64_GOTPCREL) {
       uint64_t GOTOffset = allocateGOTEntries(SectionID, 1);
       resolveGOTOffsetRelocation(SectionID, Offset, GOTOffset + Addend);
@@ -1610,12 +1687,33 @@ relocation_iterator RuntimeDyldELF::processRelocationRef(
         addRelocationForSymbol(RE, Value.SymbolName);
       else
         addRelocationForSection(RE, Value.SectionID);
-    } else if (RelType == ELF::R_X86_64_PC32) {
-      Value.Addend += support::ulittle32_t::ref(computePlaceholderAddress(SectionID, Offset));
-      processSimpleRelocation(SectionID, Offset, RelType, Value);
-    } else if (RelType == ELF::R_X86_64_PC64) {
-      Value.Addend += support::ulittle64_t::ref(computePlaceholderAddress(SectionID, Offset));
-      processSimpleRelocation(SectionID, Offset, RelType, Value);
+    } else if (RelType == ELF::R_X86_64_TLSGD) {
+      uint64_t GOTOffset = allocateGOTEntries(SectionID, 2);
+      resolveGOTOffsetRelocation(SectionID, Offset,
+        GOTOffset + Addend + TLSSR->ExtraGOTAddend());
+
+      RelocationEntry REMOD = computeGOTOffsetRE(SectionID, GOTOffset, Value.Offset, ELF::R_X86_64_DTPMOD64);
+      RelocationEntry REOFF = computeGOTOffsetRE(SectionID, GOTOffset + 8, Value.Offset, ELF::R_X86_64_DTPOFF64);
+      if (Value.SymbolName) {
+        addRelocationForSymbol(REMOD, Value.SymbolName, true);
+        addRelocationForSymbol(REOFF, Value.SymbolName, true);
+      }
+      else {
+        addRelocationForSection(REMOD, Value.SectionID);
+        addRelocationForSection(REOFF, Value.SectionID);
+      }
+    } else if (RelType == ELF::R_X86_64_GOTTPOFF) {
+      uint64_t GOTOffset = allocateGOTEntries(SectionID, 1);
+      resolveGOTOffsetRelocation(SectionID, Offset,
+        GOTOffset + Addend + TLSSR->ExtraGOTAddend());
+
+      RelocationEntry REOFF = computeGOTOffsetRE(SectionID, GOTOffset, Value.Offset, ELF::R_X86_64_TPOFF64);
+      if (Value.SymbolName) {
+        addRelocationForSymbol(REOFF, Value.SymbolName, true);
+      }
+      else {
+        addRelocationForSection(REOFF, Value.SectionID);
+      }
     } else {
       processSimpleRelocation(SectionID, Offset, RelType, Value);
     }

@@ -194,6 +194,9 @@ protected:
   // The symbol resolver to use for external symbols.
   RuntimeDyld::SymbolResolver &Resolver;
 
+  // The symbol resolver to use for external TLS symbols.
+  RuntimeDyld::TLSSymbolResolver *TLSResolver;
+
   // Attached RuntimeDyldChecker instance. Null if no instance attached.
   RuntimeDyldCheckerImpl *Checker;
 
@@ -230,6 +233,10 @@ protected:
   // external when they aren't found in the global symbol table of all loaded
   // modules.  This map is indexed by symbol name.
   StringMap<RelocationList> ExternalSymbolRelocations;
+
+  // We separate out external relocations to TLS symbols so we can process
+  // them all in one go.
+  StringMap<RelocationList> ExternalTLSRelocations;
 
 
   typedef std::map<RelocationValueRef, uintptr_t> StubMap;
@@ -342,7 +349,10 @@ protected:
 
   // \brief Add a relocation entry that uses the given symbol.  This symbol may
   // be found in the global symbol table, or it may be external.
-  void addRelocationForSymbol(const RelocationEntry &RE, StringRef SymbolName);
+  // Also indicate whether processing this relocation will require dealing
+  // with thread local storage.
+  void addRelocationForSymbol(const RelocationEntry &RE, StringRef SymbolName,
+    bool isTLS = false);
 
   /// \brief Emits long jump instruction to Addr.
   /// \return Pointer to the memory area for emitting target address.
@@ -368,6 +378,13 @@ protected:
   /// \brief Resolve relocations to external symbols.
   void resolveExternalSymbols();
 
+  /// \brief Resolve TLS relocations to external symbols
+  ///
+  /// This is split out from resolveExternalSymbols, because unlike regular symbols
+  /// TLS symbols do not require just an address but have an object-file specific
+  /// representation.
+  virtual void resolveExternalTLSSymbols() {};
+
   // \brief Compute an upper bound of the memory that is required to load all
   // sections
   void computeTotalAllocSize(const ObjectFile &Obj, uint64_t &CodeSize,
@@ -382,8 +399,9 @@ protected:
 
 public:
   RuntimeDyldImpl(RuntimeDyld::MemoryManager &MemMgr,
-                  RuntimeDyld::SymbolResolver &Resolver)
-    : MemMgr(MemMgr), Resolver(Resolver), Checker(nullptr),
+                  RuntimeDyld::SymbolResolver &Resolver,
+                  RuntimeDyld::TLSSymbolResolver *TLSResolver)
+    : MemMgr(MemMgr), Resolver(Resolver), TLSResolver(TLSResolver), Checker(nullptr),
       ProcessAllSections(false), HasError(false) {
   }
 

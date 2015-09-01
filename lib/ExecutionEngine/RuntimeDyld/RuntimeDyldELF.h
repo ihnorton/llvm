@@ -22,14 +22,51 @@ using namespace llvm;
 namespace llvm {
 
 class RuntimeDyldELF : public RuntimeDyldImpl {
+public:
+    // Wraps a RuntimeDyld::TLSSymbolInfo with accessors to easily access the ELF specific interpretation
+  class TLSSymbolInfoELF {
+  public:
+    struct ModuleInfo {
+        uint64_t ModuleID;
+        int64_t tpoff;
+        ModuleInfo(uint64_t ModuleID, int64_t tpoff) :
+          ModuleID(ModuleID), tpoff(tpoff) {}
+    };
+
+    TLSSymbolInfoELF(ModuleInfo Mod, uint64_t Offset, JITSymbolFlags Flags = JITSymbolFlags::None) :
+      Data(Mod.ModuleID,Offset,Mod.tpoff,Flags) {};
+    TLSSymbolInfoELF(RuntimeDyld::TLSSymbolInfo Data) : Data(Data) {};
+
+    ModuleInfo getModInfo() { return ModuleInfo(Data.getFirst(), Data.getThird()); }
+    uint64_t getOffset() { return Data.getSecond(); }
+    RuntimeDyld::TLSSymbolInfo getOpaque() { return Data; }
+
+  private:
+    RuntimeDyld::TLSSymbolInfo Data;
+  };
+
+  class TLSSymbolResolverELF : public RuntimeDyld::TLSSymbolResolver {
+  public:
+    virtual int64_t ExtraGOTAddend() { return 0; };
+    virtual uint64_t GetAddrOverride() { return 0; };
+    TLSSymbolInfoELF findTLSSymbolELF(const std::string &Name) { return TLSSymbolInfoELF(findTLSSymbol(Name)); }
+  };
+
+private:
 
   void resolveRelocation(const SectionEntry &Section, uint64_t Offset,
                          uint64_t Value, uint32_t Type, int64_t Addend,
                          uint64_t SymOffset = 0, SID SectionID = 0);
 
+  void resolveRelocationTLS(const RelocationEntry &RE,
+                            TLSSymbolInfoELF Value);
+
   void resolveX86_64Relocation(const SectionEntry &Section, uint64_t Offset,
                                uint64_t Value, uint32_t Type, int64_t Addend,
                                uint64_t SymOffset);
+
+  void resolveX86_64RelocationTLS(const SectionEntry &Section, uint64_t Offset,
+                                  TLSSymbolInfoELF Value, uint32_t Type);
 
   void resolveX86Relocation(const SectionEntry &Section, uint64_t Offset,
                             uint32_t Value, uint32_t Type, int32_t Addend);
@@ -154,11 +191,14 @@ class RuntimeDyldELF : public RuntimeDyldImpl {
 
 public:
   RuntimeDyldELF(RuntimeDyld::MemoryManager &MemMgr,
-                 RuntimeDyld::SymbolResolver &Resolver);
+                 RuntimeDyld::SymbolResolver &Resolver,
+                 RuntimeDyld::TLSSymbolResolver *TLSResolver);
   ~RuntimeDyldELF() override;
 
   std::unique_ptr<RuntimeDyld::LoadedObjectInfo>
   loadObject(const object::ObjectFile &O) override;
+
+  void resolveExternalTLSSymbols() override;
 
   void resolveRelocation(const RelocationEntry &RE, uint64_t Value) override;
   relocation_iterator
@@ -171,6 +211,32 @@ public:
   void deregisterEHFrames() override;
   void finalizeLoad(const ObjectFile &Obj,
                     ObjSectionToIDMap &SectionMap) override;
+};
+
+// Useful out-of-the box TLS symbol resolver implementations for
+// libc (those using the glibc ABI) and ELF-on-Darwin
+
+// TLS as implemented by glibc
+class TLSSymbolResolverGLibCELF : public RuntimeDyldELF::TLSSymbolResolverELF {
+private:
+    RuntimeDyld::SymbolResolver *SR;
+public:
+    TLSSymbolResolverGLibCELF(RuntimeDyld::SymbolResolver *SR) : TLSSymbolResolverELF(), SR(SR) {};
+    RuntimeDyld::TLSSymbolInfo findTLSSymbol(const std::string &Name) override;
+};
+
+// Support ELF-on-Darwin by matching ELF's TLS model onto that used by OS X
+class TLSSymbolResolverDarwinELF : public RuntimeDyldELF::TLSSymbolResolverELF {
+private:
+    RuntimeDyld::SymbolResolver *SR;
+    uint64_t tlv_get_addr_addr;
+public:
+    TLSSymbolResolverDarwinELF(RuntimeDyld::SymbolResolver *SR) : TLSSymbolResolverELF(), SR(SR),
+        tlv_get_addr_addr(0) {};
+
+    int64_t ExtraGOTAddend() override { return -8; };
+    uint64_t GetAddrOverride() override { return tlv_get_addr_addr; };
+    RuntimeDyld::TLSSymbolInfo findTLSSymbol(const std::string &Name) override;
 };
 
 } // end namespace llvm

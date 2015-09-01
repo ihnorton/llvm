@@ -83,6 +83,8 @@ void RuntimeDyldImpl::resolveRelocations() {
   MutexGuard locked(lock);
 
   // First, resolve relocations associated with external symbols.
+  if (TLSResolver)
+    resolveExternalTLSSymbols();
   resolveExternalSymbols();
 
   // Just iterate over the sections we have and resolve all the relocations
@@ -636,14 +638,21 @@ void RuntimeDyldImpl::addRelocationForSection(const RelocationEntry &RE,
 }
 
 void RuntimeDyldImpl::addRelocationForSymbol(const RelocationEntry &RE,
-                                             StringRef SymbolName) {
+                                             StringRef SymbolName,
+                                             bool isTLS) {
   // Relocation by symbol.  If the symbol is found in the global symbol table,
   // create an appropriate section relocation.  Otherwise, add it to
   // ExternalSymbolRelocations.
   RTDyldSymbolTable::const_iterator Loc = GlobalSymbolTable.find(SymbolName);
   if (Loc == GlobalSymbolTable.end()) {
-    ExternalSymbolRelocations[SymbolName].push_back(RE);
+    if (isTLS) {
+      ExternalTLSRelocations[SymbolName].push_back(RE);
+    } else {
+      ExternalSymbolRelocations[SymbolName].push_back(RE);
+    }
   } else {
+    assert(!isTLS && "Declaring thread local variables in loaded objects "
+                     "is not yet supported.");
     // Copy the RE since we want to modify its addend.
     RelocationEntry RECopy = RE;
     const auto &SymInfo = Loc->second;
@@ -761,6 +770,11 @@ void RuntimeDyldImpl::resolveRelocationList(const RelocationList &Relocs,
 }
 
 void RuntimeDyldImpl::resolveExternalSymbols() {
+  // First give the subclass a chance to resolve any TLS symbols.
+  // This may require pulling in additional modules, creating new
+  // external relocations.
+  if (TLSResolver)
+    resolveExternalTLSSymbols();
   while (!ExternalSymbolRelocations.empty()) {
     StringMap<RelocationList>::iterator i = ExternalSymbolRelocations.begin();
 
@@ -811,6 +825,11 @@ void RuntimeDyldImpl::resolveExternalSymbols() {
     }
 
     ExternalSymbolRelocations.erase(i);
+
+    // Resolving this symbol may have loaded additional modules whose TLS
+    // Relocations need to be resolved.
+    if (TLSResolver)
+      resolveExternalTLSSymbols();
   }
 }
 
@@ -830,8 +849,9 @@ void RuntimeDyld::MemoryManager::anchor() {}
 void RuntimeDyld::SymbolResolver::anchor() {}
 
 RuntimeDyld::RuntimeDyld(RuntimeDyld::MemoryManager &MemMgr,
-                         RuntimeDyld::SymbolResolver &Resolver)
-    : MemMgr(MemMgr), Resolver(Resolver) {
+                         RuntimeDyld::SymbolResolver &Resolver,
+                         RuntimeDyld::TLSSymbolResolver *TLSResolver)
+    : MemMgr(MemMgr), Resolver(Resolver), TLSResolver(TLSResolver) {
   // FIXME: There's a potential issue lurking here if a single instance of
   // RuntimeDyld is used to load multiple objects.  The current implementation
   // associates a single memory manager with a RuntimeDyld instance.  Even
@@ -860,7 +880,13 @@ static std::unique_ptr<RuntimeDyldELF>
 createRuntimeDyldELF(RuntimeDyld::MemoryManager &MM,
                      RuntimeDyld::SymbolResolver &Resolver,
                      bool ProcessAllSections, RuntimeDyldCheckerImpl *Checker) {
-  std::unique_ptr<RuntimeDyldELF> Dyld(new RuntimeDyldELF(MM, Resolver));
+  RuntimeDyld::TLSSymbolResolver *TLSResolver;
+  #ifdef __GLIBC__
+  TLSResolver = new TLSSymbolResolverGLibCELF(&Resolver);
+  #elif defined(__APPLE__)
+  TLSResolver = new TLSSymbolResolverDarwinELF(&Resolver);
+  #endif
+  std::unique_ptr<RuntimeDyldELF> Dyld(new RuntimeDyldELF(MM, Resolver, TLSResolver));
   Dyld->setProcessAllSections(ProcessAllSections);
   Dyld->setRuntimeDyldChecker(Checker);
   return Dyld;

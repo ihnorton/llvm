@@ -35,6 +35,7 @@ public:
   getObjectForDebug(const ObjectFile &Obj) const override {
     return OwningBinary<ObjectFile>();
   }
+
 };
 }
 

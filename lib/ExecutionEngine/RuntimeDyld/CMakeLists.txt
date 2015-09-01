@@ -5,6 +5,7 @@ add_llvm_library(LLVMRuntimeDyld
   RuntimeDyldCOFF.cpp
   RuntimeDyldELF.cpp
   RuntimeDyldMachO.cpp
+  TLSSymbolResolverELF.cpp
 
   DEPENDS
   intrinsics_gen
