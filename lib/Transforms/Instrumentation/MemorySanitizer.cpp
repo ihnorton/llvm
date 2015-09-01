@@ -381,7 +381,7 @@ static GlobalVariable *createPrivateNonConstGlobalForString(Module &M,
 /// \brief Insert extern declaration of runtime-provided functions and globals.
 void MemorySanitizer::initializeCallbacks(Module &M) {
   // Only do this once.
-  if (WarningFn)
+  if (WarningFn && cast<Function>(WarningFn)->getParent() == &M)
     return;
 
   IRBuilder<> IRB(*C);
@@ -425,34 +425,59 @@ void MemorySanitizer::initializeCallbacks(Module &M) {
     IntptrTy, nullptr);
 
   // Create globals.
-  RetvalTLS = new GlobalVariable(
-    M, ArrayType::get(IRB.getInt64Ty(), kRetvalTLSSize / 8), false,
-    GlobalVariable::ExternalLinkage, nullptr, "__msan_retval_tls", nullptr,
-    GlobalVariable::InitialExecTLSModel);
-  RetvalOriginTLS = new GlobalVariable(
-    M, OriginTy, false, GlobalVariable::ExternalLinkage, nullptr,
-    "__msan_retval_origin_tls", nullptr, GlobalVariable::InitialExecTLSModel);
+  RetvalTLS = M.getGlobalVariable("__msan_retval_tls");
+  if (!RetvalTLS) {
+    RetvalTLS = new GlobalVariable(
+      M, ArrayType::get(IRB.getInt64Ty(), kRetvalTLSSize / 8), false,
+      GlobalVariable::ExternalLinkage, nullptr, "__msan_retval_tls", nullptr,
+      GlobalVariable::InitialExecTLSModel);
+  }
 
-  ParamTLS = new GlobalVariable(
-    M, ArrayType::get(IRB.getInt64Ty(), kParamTLSSize / 8), false,
-    GlobalVariable::ExternalLinkage, nullptr, "__msan_param_tls", nullptr,
-    GlobalVariable::InitialExecTLSModel);
-  ParamOriginTLS = new GlobalVariable(
-    M, ArrayType::get(OriginTy, kParamTLSSize / 4), false,
-    GlobalVariable::ExternalLinkage, nullptr, "__msan_param_origin_tls",
-    nullptr, GlobalVariable::InitialExecTLSModel);
+  RetvalOriginTLS = M.getGlobalVariable("__msan_retval_origin_tls");
+  if (!RetvalOriginTLS) {
+    RetvalOriginTLS = new GlobalVariable(
+      M, OriginTy, false, GlobalVariable::ExternalLinkage, nullptr,
+      "__msan_retval_origin_tls", nullptr, GlobalVariable::InitialExecTLSModel);
+  }
 
-  VAArgTLS = new GlobalVariable(
-    M, ArrayType::get(IRB.getInt64Ty(), kParamTLSSize / 8), false,
-    GlobalVariable::ExternalLinkage, nullptr, "__msan_va_arg_tls", nullptr,
-    GlobalVariable::InitialExecTLSModel);
-  VAArgOverflowSizeTLS = new GlobalVariable(
-    M, IRB.getInt64Ty(), false, GlobalVariable::ExternalLinkage, nullptr,
-    "__msan_va_arg_overflow_size_tls", nullptr,
-    GlobalVariable::InitialExecTLSModel);
-  OriginTLS = new GlobalVariable(
-    M, IRB.getInt32Ty(), false, GlobalVariable::ExternalLinkage, nullptr,
-    "__msan_origin_tls", nullptr, GlobalVariable::InitialExecTLSModel);
+  ParamTLS = M.getGlobalVariable("__msan_param_tls");
+  if (!ParamTLS) {
+    ParamTLS = new GlobalVariable(
+      M, ArrayType::get(IRB.getInt64Ty(), kParamTLSSize / 8), false,
+      GlobalVariable::ExternalLinkage, nullptr, "__msan_param_tls", nullptr,
+      GlobalVariable::InitialExecTLSModel);
+  }
+
+  ParamOriginTLS = M.getGlobalVariable("__msan_param_origin_tls");
+  if (!ParamOriginTLS) {
+    ParamOriginTLS = new GlobalVariable(
+      M, ArrayType::get(OriginTy, kParamTLSSize / 4), false,
+      GlobalVariable::ExternalLinkage, nullptr, "__msan_param_origin_tls",
+      nullptr, GlobalVariable::InitialExecTLSModel);
+  }
+
+  VAArgTLS = M.getGlobalVariable("__msan_va_arg_tls");
+  if (!VAArgTLS) {
+    VAArgTLS = new GlobalVariable(
+      M, ArrayType::get(IRB.getInt64Ty(), kParamTLSSize / 8), false,
+      GlobalVariable::ExternalLinkage, nullptr, "__msan_va_arg_tls", nullptr,
+      GlobalVariable::InitialExecTLSModel);
+  }
+
+  VAArgOverflowSizeTLS = M.getGlobalVariable("__msan_va_arg_overflow_size_tls");
+  if (!VAArgOverflowSizeTLS) {
+    VAArgOverflowSizeTLS = new GlobalVariable(
+      M, IRB.getInt64Ty(), false, GlobalVariable::ExternalLinkage, nullptr,
+      "__msan_va_arg_overflow_size_tls", nullptr,
+      GlobalVariable::InitialExecTLSModel);
+  }
+
+  OriginTLS = M.getGlobalVariable("__msan_origin_tls");
+  if (!OriginTLS) {
+    OriginTLS = new GlobalVariable(
+      M, IRB.getInt32Ty(), false, GlobalVariable::ExternalLinkage, nullptr,
+      "__msan_origin_tls", nullptr, GlobalVariable::InitialExecTLSModel);
+  }
 
   // We insert an empty inline asm after __msan_report* to avoid callback merge.
   EmptyAsm = InlineAsm::get(FunctionType::get(IRB.getVoidTy(), false),

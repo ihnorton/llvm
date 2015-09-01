@@ -243,7 +243,7 @@ static int printLineInfoForInput(bool LoadObjects, bool UseDebugObj) {
   for(unsigned i = 0, e = InputFileList.size(); i != e; ++i) {
     // Instantiate a dynamic linker.
     TrivialMemoryManager MemMgr;
-    RuntimeDyld Dyld(MemMgr, MemMgr);
+    RuntimeDyld Dyld(MemMgr, MemMgr, nullptr);
 
     // Load the input memory buffer.
 
@@ -336,7 +336,7 @@ static int executeInput() {
 
   // Instantiate a dynamic linker.
   TrivialMemoryManager MemMgr;
-  RuntimeDyld Dyld(MemMgr, MemMgr);
+  RuntimeDyld Dyld(MemMgr, MemMgr, nullptr);
 
   // FIXME: Preserve buffers until resolveRelocations time to work around a bug
   //        in RuntimeDyldELF.
@@ -612,7 +612,7 @@ static int linkAndVerify() {
 
   // Instantiate a dynamic linker.
   TrivialMemoryManager MemMgr;
-  RuntimeDyld Dyld(MemMgr, MemMgr);
+  RuntimeDyld Dyld(MemMgr, MemMgr, nullptr);
   Dyld.setProcessAllSections(true);
   RuntimeDyldChecker Checker(Dyld, Disassembler.get(), InstPrinter.get(),
                              llvm::dbgs());

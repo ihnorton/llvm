@@ -51,7 +51,7 @@ protected:
 
   RuntimeDyldMachO(RuntimeDyld::MemoryManager &MemMgr,
                    RuntimeDyld::SymbolResolver &Resolver)
-      : RuntimeDyldImpl(MemMgr, Resolver) {}
+      : RuntimeDyldImpl(MemMgr, Resolver, nullptr) {}
 
   /// This convenience method uses memcpy to extract a contiguous addend (the
   /// addend size and offset are taken from the corresponding fields of the RE).
